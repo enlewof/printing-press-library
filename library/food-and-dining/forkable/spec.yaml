@@ -21,6 +21,15 @@ required_headers:
 auth:
   type: cookie
   cookie_domain: forkable.com
+  # Forkable's Rails-style app session cookie. Confirmed present (name only,
+  # no value inspected) via a live Chrome cookie-jar read against
+  # forkable.com; the client itself still forwards the whole per-domain jar
+  # (see internal/cli/auth.go's requiredAuthCookies(), intentionally empty)
+  # rather than filtering to just this name — this entry satisfies the spec
+  # validator's auth.cookies non-empty requirement for type: cookie with the
+  # real session cookie, not a placeholder.
+  cookies:
+    - _easyorder_session
   login_url: "https://forkable.com/mc/"
   login_complete_selector: "a[href*=logout]"
   verify_path: "/api/v2/csrf_token"

@@ -46,7 +46,7 @@ func newNovelUpcomingDigestCmd(flags *rootFlags) *cobra.Command {
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRunOK(flags) {
-				fmt.Fprintln(cmd.OutOrStdout(), "would summarize upcoming deliveries")
+				emitDryRunShortCircuit(cmd, flags, "summarize upcoming deliveries")
 				return nil
 			}
 			ctx, cancel := boundCtx(cmd.Context(), flags)

@@ -65,7 +65,7 @@ func newNovelWhyPickedCmd(flags *rootFlags) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRunOK(flags) {
-				fmt.Fprintln(cmd.OutOrStdout(), "would explain a delivery's auto-selected meal")
+				emitDryRunShortCircuit(cmd, flags, "explain a delivery's auto-selected meal")
 				return nil
 			}
 			if flagDelivery == 0 {

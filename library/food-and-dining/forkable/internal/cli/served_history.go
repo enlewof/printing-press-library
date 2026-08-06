@@ -103,7 +103,7 @@ func newNovelServedHistoryCmd(flags *rootFlags) *cobra.Command {
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRunOK(flags) {
-				fmt.Fprintln(cmd.OutOrStdout(), "would fetch served-meal history from Forkable")
+				emitDryRunShortCircuit(cmd, flags, "fetch served-meal history from Forkable")
 				return nil
 			}
 			deliveries, err := fetchDeliveries(cmd, flags, servedHistoryQuery)

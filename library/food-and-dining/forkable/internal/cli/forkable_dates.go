@@ -74,3 +74,21 @@ func dateOnOrAfter(dateStr, cutoff string) bool {
 	}
 	return dateStr[:10] >= cutoff
 }
+
+// daysSinceUTC computes whole calendar days between a "YYYY-MM-DD" date
+// string and now's local calendar date. time.Parse on a date-only layout
+// returns a UTC-midnight time.Time; subtracting that directly from a local
+// `now` mixes zones and can misreport the day count by one near local/UTC
+// day boundaries. This anchors "today" as a UTC midnight built from now's
+// own calendar date, so both operands are UTC midnights and the delta is
+// an exact multiple of 24h — which also sidesteps the DST-related
+// off-by-one a local-zone truncation would introduce. Returns -1 if
+// dateStr does not parse as "2006-01-02".
+func daysSinceUTC(dateStr string, now time.Time) int {
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		return -1
+	}
+	todayUTC := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	return int(todayUTC.Sub(t).Hours() / 24)
+}

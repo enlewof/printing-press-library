@@ -41,7 +41,7 @@ func newNovelVenueRotationCmd(flags *rootFlags) *cobra.Command {
 		Annotations: map[string]string{"mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRunOK(flags) {
-				fmt.Fprintln(cmd.OutOrStdout(), "would rank venues by frequency and recency")
+				emitDryRunShortCircuit(cmd, flags, "rank venues by frequency and recency")
 				return nil
 			}
 			deliveries, err := fetchDeliveries(cmd, flags, servedHistoryQuery)
@@ -82,10 +82,7 @@ func newNovelVenueRotationCmd(flags *rootFlags) *cobra.Command {
 			now := time.Now()
 			stats := make([]venueStat, 0, len(byVenue))
 			for vid, a := range byVenue {
-				days := -1
-				if t, err := time.Parse("2006-01-02", a.lastSeen); err == nil {
-					days = int(now.Sub(t).Hours() / 24)
-				}
+				days := daysSinceUTC(a.lastSeen, now)
 				stats = append(stats, venueStat{VenueID: vid, Venue: a.name, Times: a.times, LastSeen: a.lastSeen, DaysSinceSeen: days})
 			}
 			// Rank by frequency desc, then recency (fewer days since) asc.

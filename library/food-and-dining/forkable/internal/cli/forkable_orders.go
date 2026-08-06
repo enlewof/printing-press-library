@@ -73,7 +73,57 @@ func mutateGraphQL(ctx context.Context, flags *rootFlags, query string, variable
 	if len(env.Errors) > 0 {
 		return nil, fmt.Errorf("forkable GraphQL error: %s", env.Errors[0].Message)
 	}
+	// Top-level GraphQL errors (above) cover transport/schema-level
+	// failures, but Forkable's mutations also arrive with HTTP 200 and
+	// env.Errors empty when the mutation itself is rejected — the failure
+	// surfaces only inside the single operation's own payload object, e.g.
+	// {"replacePiece": {"delivery": null, "errors": ["..."]}}. Every
+	// mutation built in this file requests "errors" in its selection set
+	// (see the buildMutation call sites below), so this check applies
+	// uniformly regardless of which operation ran. Without it, a rejected
+	// write returns success here and emitMutationResult prints "Done."
+	if err := payloadMutationErrors(env.Data); err != nil {
+		return nil, err
+	}
 	return env.Data, nil
+}
+
+// payloadMutationErrors inspects a mutation's decoded `data` payload for a
+// payload-level `errors` field and returns a non-nil error when it is
+// present and non-empty. It does not assume how many top-level operation
+// keys `data` has, or whether each error entry is a string or an object —
+// different Forkable mutations use different shapes — so it treats any
+// non-null, non-empty JSON array under "errors" as a rejected mutation. A
+// missing "errors" field, or one that decodes to null or an empty array,
+// is not an error.
+func payloadMutationErrors(data json.RawMessage) error {
+	var ops map[string]json.RawMessage
+	if err := json.Unmarshal(data, &ops); err != nil {
+		// Not a plain object we can inspect for payload errors; leave any
+		// real problem for the caller's own use of data to surface.
+		return nil
+	}
+	for _, opData := range ops {
+		var payload struct {
+			Errors json.RawMessage `json:"errors"`
+		}
+		if err := json.Unmarshal(opData, &payload); err != nil {
+			continue
+		}
+		if len(payload.Errors) == 0 {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(payload.Errors))
+		if trimmed == "" || trimmed == "null" {
+			continue
+		}
+		var asArray []json.RawMessage
+		if err := json.Unmarshal(payload.Errors, &asArray); err == nil && len(asArray) == 0 {
+			continue
+		}
+		return fmt.Errorf("forkable mutation rejected the change: %s", trimmed)
+	}
+	return nil
 }
 
 // buildMutation renders the SPA's parameterized mutation shape. inputType is
