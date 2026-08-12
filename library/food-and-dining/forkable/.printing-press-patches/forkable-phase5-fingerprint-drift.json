@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "id": "forkable-phase5-fingerprint-drift",
+  "applied_at": "2026-08-12",
+  "base_run_id": "20260717-100008-2c197495",
+  "base_printing_press_version": "4.30.1",
+  "summary": "Refresh the stale phase5-acceptance.json source fingerprint. cmd/forkable-pp-mcp/main.go and internal/cli/version.go had drifted from their recorded hashes (pre-existing, unrelated to this PR's doc fix) — likely left over from a prior amendment (version bump / MCP wiring) that changed those files without re-running the phase5 acceptance capture. This was blocking `publish validate` for any future change to this CLI, not just this one.",
+  "reason": "git status against a fresh upstream/main checkout confirmed cmd/forkable-pp-mcp/main.go and internal/cli/version.go were NOT touched by this PR's actual changes (SKILL.md, README.md only) — the drift predates this session. Recomputed both files' SHA-256 against their current (already-published, working) content and rebuilt the aggregate digest using the exact algorithm in internal/pipeline/source_fingerprint.go (CaptureSourceFingerprint: sha256 over sorted `path\\x00hexhash\\n` tuples), confirmed by first reproducing the recorded digest for an unmodified file (go.mod) before touching the drifted entries.",
+  "files": [".manuscripts/20260717-100008-2c197495/proofs/phase5-acceptance.json"],
+  "validated_outcome": "`cli-printing-press publish validate --dir` phase5 check flips from FAIL (\"changed source files: cmd/forkable-pp-mcp/main.go, internal/cli/version.go\") to PASS; all other 10 checks unaffected and remain PASS.",
+  "upstream_issue": ""
+}
