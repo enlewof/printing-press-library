@@ -20,8 +20,16 @@ import (
 // when hosted in a container or remote sandbox, matching the Anthropic
 // guidance that production agents need a remote option.
 
+// pp:hand-edit bonusly-mcp-loopback-only — was ":7777", which Go's
+// http.ListenAndServe binds to all interfaces (0.0.0.0). The registered MCP
+// tools include credential-backed recognition mutations (create/update/
+// delete) with no caller-authentication middleware, so an all-interface
+// bind would let any network peer reachable on this port invoke them using
+// the host user's stored Bonusly credentials. Default to loopback-only;
+// --addr still allows an explicit, informed opt-in to a wider bind for
+// operators who have their own network-level access control.
 const (
-	defaultHTTPAddr = ":7777"
+	defaultHTTPAddr = "127.0.0.1:7777"
 )
 
 // version is the printed MCP server's version, overridable at build time via ldflags.
@@ -44,7 +52,9 @@ func main() {
 	mcptools.RegisterTools(s)
 
 	transport := flag.String("transport", defaultTransport(), "MCP transport: stdio | http")
-	addr := flag.String("addr", defaultHTTPAddr, "bind address for http transport (host:port or :port)")
+	// pp:hand-edit bonusly-mcp-loopback-only — flag help updated to carry
+	// the security tradeoff forward for anyone who overrides the default.
+	addr := flag.String("addr", defaultHTTPAddr, "bind address for http transport (host:port or :port). Default is loopback-only; registered tools include credential-backed recognition mutations with no caller authentication, so binding to a non-loopback address exposes them to any peer that can reach this port.")
 	flag.Parse()
 
 	switch strings.ToLower(*transport) {
