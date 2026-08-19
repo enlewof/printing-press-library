@@ -279,12 +279,18 @@ func newRateLimiter(rateLimit float64) *cliutil.AdaptiveLimiter {
 // the real session credential to that endpoint on every relative request.
 const concurCookieDomain = "concursolutions.com"
 
-// baseURLIsTrustedConcurHost reports whether rawURL's host is
-// concurCookieDomain itself or a subdomain of it. An unparsable or
-// hostless URL is untrusted.
+// baseURLIsTrustedConcurHost reports whether rawURL is an HTTPS URL whose
+// host is concurCookieDomain itself or a subdomain of it. Requiring https
+// is deliberate: a plain-http://<concur-host> override would still be a
+// genuine Concur hostname by the domain check alone, but the session
+// cookie is not marked Secure-only when this jar seeds it (net/http does
+// not enforce Secure on jar entries the way a browser does), so seeding it
+// against an http:// URL would transmit the real credential in cleartext
+// on every relative request. An unparsable, hostless, or non-https URL is
+// untrusted.
 func baseURLIsTrustedConcurHost(rawURL string) bool {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || u.Scheme != "https" {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
@@ -306,7 +312,7 @@ func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 		if baseURLIsTrustedConcurHost(cfg.BaseURL) {
 			SeedCookieJar(cookieJar, cfg.BaseURL, cfg.CookieCredential())
 		} else if cfg.CookieCredential() != "" {
-			fmt.Fprintf(os.Stderr, "warning: base URL %q is not a %s host -- not sending your Concur session cookie to it\n", cfg.BaseURL, concurCookieDomain)
+			fmt.Fprintf(os.Stderr, "warning: base URL %q is not an https %s host -- not sending your Concur session cookie to it\n", cfg.BaseURL, concurCookieDomain)
 		}
 	}
 	httpClient := newHTTPClient(timeout, cookieJar, cfg.SkipTLSVerify)

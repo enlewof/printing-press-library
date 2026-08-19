@@ -11,7 +11,7 @@
   "auth_context": {
     "type": "cookie"
   },
-  "source_fingerprint": "5ba140dd79259f5b43f6e984ac475907628d5984b6dcc21f8e547632ddb08c4c",
+  "source_fingerprint": "830e15896b7ed23e508b7a3ee72d153e020f3a4f08f739971d8595a9d6ab0bd3",
   "source_files": {
     "cmd/concur-pp-cli/main.go": "b2849d9c77d59a84c48ecb4c01ae2e27b1052ff7d3c73260d4da9983b12703e3",
     "cmd/concur-pp-mcp/main.go": "a7b3d7974a0c4f431e577a428d33aab17008f8f447be35377a3acec5b94caf7d",
@@ -98,7 +98,7 @@
     "internal/cli/version.go": "9d70505c57ae6345d69608dd4b1bc67c59d4d3ca60adbae861c8e856bdb16e23",
     "internal/cli/which.go": "2c21ef5a54e119b99c05669a5af487c65e4930d29f59b1d2de7eec867cb17db9",
     "internal/cli/which_test.go": "f9eb14334b109c0c5f1460e9ca7d2390c8bbbf1b413928f71872d0d6f417e6d3",
-    "internal/client/client.go": "0c1870d4021b98ef27fb53ca6a2ca90344d2e4e83993118c3b5aae5c5b538fdb",
+    "internal/client/client.go": "1096e441de63e1a6caf1f7805c9f8ffb52975cd5596afa711cc25838d51d8032",
     "internal/client/client_test.go": "36a3901755cacf2e3c1a8ab7e3cb738e1f48e2ecc15b8cb7e1d26929e2c71d96",
     "internal/client/client_verify_short_circuit_test.go": "4cc14a035107b62379ac1dfaeb628148456f555416ab215467d55e7ea9289564",
     "internal/client/cookiejar.go": "a79c4fc6a6aef0b8aebde3a016f5a330e2be4d60f6817494eb8a5c41da1653d9",
