@@ -270,6 +270,27 @@ func newRateLimiter(rateLimit float64) *cliutil.AdaptiveLimiter {
 	return cliutil.NewAdaptiveLimiter(rateLimit) // 0 -> nil (disabled); >0 -> explicit ceiling
 }
 
+// concurCookieDomain is the trusted domain the real Concur session cookie
+// (JWT/_csrf) belongs to. Only seed that cookie into the HTTP client's jar
+// when the configured base URL actually resolves to this domain or a
+// subdomain of it (e.g. www-us2.api.concursolutions.com,
+// us2.concursolutions.com) -- otherwise a --base-url/CONCUR_BASE_URL
+// override pointed at an unrelated host, or a plain-HTTP one, would carry
+// the real session credential to that endpoint on every relative request.
+const concurCookieDomain = "concursolutions.com"
+
+// baseURLIsTrustedConcurHost reports whether rawURL's host is
+// concurCookieDomain itself or a subdomain of it. An unparsable or
+// hostless URL is untrusted.
+func baseURLIsTrustedConcurHost(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == concurCookieDomain || strings.HasSuffix(host, "."+concurCookieDomain)
+}
+
 func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 	cacheDir := ""
 	if dir, err := cliutil.CacheDir(); err == nil {
@@ -279,8 +300,14 @@ func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 	// Seed the jar from a session captured via the env var or stored in
 	// credentials but not yet in cookies.json, so the credential rides every
 	// request and net/http absorbs Set-Cookie rotation across the session.
+	// Gated on baseURLIsTrustedConcurHost: see its comment for why an
+	// overridden base URL must not receive the real session cookie.
 	if cfg != nil {
-		SeedCookieJar(cookieJar, cfg.BaseURL, cfg.CookieCredential())
+		if baseURLIsTrustedConcurHost(cfg.BaseURL) {
+			SeedCookieJar(cookieJar, cfg.BaseURL, cfg.CookieCredential())
+		} else if cfg.CookieCredential() != "" {
+			fmt.Fprintf(os.Stderr, "warning: base URL %q is not a %s host -- not sending your Concur session cookie to it\n", cfg.BaseURL, concurCookieDomain)
+		}
 	}
 	httpClient := newHTTPClient(timeout, cookieJar, cfg.SkipTLSVerify)
 	c := &Client{
