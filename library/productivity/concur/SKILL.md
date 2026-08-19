@@ -37,7 +37,7 @@ go install github.com/mvanhorn/printing-press-library/library/accounting/concur/
 
 If `--version` reports "command not found" after install, the runtime cannot see the binary directory on `$PATH`. Do not proceed with skill commands until verification succeeds.
 
-SAP Concur's official API requires enterprise partner credentials most individual users can never get. This CLI defaults to your logged-in browser session instead, so filing expense reports and checking travel works the same day you install it. Local SQLite sync turns the Available Expenses queue and report history into something you can search, join, and validate offline.
+SAP Concur's official API requires enterprise partner credentials most individual users can never get. This CLI defaults to your logged-in browser session instead, so filing expense reports and checking travel works the same day you install it. Local SQLite sync turns your report history into something you can search, join, and validate offline.
 
 ## When to Use This CLI
 

@@ -2,7 +2,7 @@
 
 **Every expense-report and travel workflow Concur's web app offers, plus duplicate detection and real flight/hotel search no Concur tool has -- filed through the same session your browser already uses.**
 
-SAP Concur's official API requires enterprise partner credentials most individual users can never get. This CLI defaults to your logged-in browser session instead, so filing expense reports and checking travel works the same day you install it. Local SQLite sync turns the Available Expenses queue and report history into something you can search, join, and validate offline.
+SAP Concur's official API requires enterprise partner credentials most individual users can never get. This CLI defaults to your logged-in browser session instead, so filing expense reports and checking travel works the same day you install it. Local SQLite sync turns your report history into something you can search, join, and validate offline.
 
 ## Install
 
