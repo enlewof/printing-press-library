@@ -31,7 +31,7 @@
     },
     {
       "name": "Saved hotel aliases",
-      "command": "hotels alias",
+      "command": "hotels alias list",
       "description": "Give a memorable name to a TravelClick hotel ID instead of memorizing a 6-digit number.",
       "rationale": "Hotel IDs only exist as an opaque query-string value on the booking URL; nothing else names them.",
       "example": "travelclick-pp-cli hotels alias add made-nyc 102306",
@@ -78,7 +78,7 @@
     },
     {
       "name": "Saved hotel aliases",
-      "command": "hotels alias",
+      "command": "hotels alias list",
       "description": "Give a memorable name to a TravelClick hotel ID instead of memorizing a 6-digit number.",
       "rationale": "Hotel IDs only exist as an opaque query-string value on the booking URL; nothing else names them.",
       "example": "travelclick-pp-cli hotels alias add made-nyc 102306",
