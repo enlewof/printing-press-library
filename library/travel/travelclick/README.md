@@ -213,7 +213,8 @@ Returns the lowest rate for every day in the range so you can sort for the minim
 travelclick-pp-cli codes validate-corporate 102306 ACME2026
 ```
 
-Confirms a rate-access code is live for this hotel before building a search around it.
+Confirms whether a rate-access code is live for this hotel. **Validating a code does not
+currently let you search rates for it** — see Known Gaps below.
 
 ### Compare three boutique hotels for the same weekend
 
@@ -391,7 +392,7 @@ If you use agentcookie to sync secrets across machines, this CLI auto-adopts age
 
 - **Auth token is captured manually, not minted automatically.** The booking widget mints its OAuth2 `client_credentials` Bearer token client-side during page load; the exact token-mint endpoint fires before any capture hook can attach and was not isolated during discovery. Until that's found, `TRAVELCLICK_TOKEN` must be re-captured from browser DevTools roughly every hour. See [Authentication](#authentication).
 - **Travel-agency rate codes are not implemented.** Only `corporate` and `group` code types were confirmed live (`codes validate-corporate`, `codes validate-group`). The travel-agency path segment is unconfirmed -- a guessed value returned `UNSUPPORTED_CODE_TYPE` -- so no `codes validate-travel-agency` command was built rather than shipping a guess.
-- **The successful (valid-code) response shape for `codes validate-*` is unconfirmed.** Every live test used a fake code, so only the 404/invalid response shape was observed. A 2xx is treated as "valid" generically; if the real success body carries useful fields (e.g. a discount percentage), they aren't surfaced yet.
+- **The successful (valid-code) response shape for `codes validate-*` is unconfirmed.** Every live test used a fake code, so only the 404/invalid response shape was observed. A 2xx is treated as "valid" generically; if the real success body carries useful fields (e.g. a discount percentage), they aren't surfaced yet. **Concrete consequence, confirmed 2026-08-20**: `rates search` has no `--corporate-code`, `--rate-plan-id`, or equivalent parameter at all — so even a successfully-validated code cannot currently be used to filter a rates search to that specific rate plan, regardless of what the success response turns out to contain. **Verified workaround**: the booking widget's own page accepts a `RatePlanId` query parameter that pre-selects a corporate rate directly — `https://reservations.travelclick.com/{hotel_id}?RatePlanId={id}` (redirects to `bookings.travelclick.com`). Confirmed working against a real hotel/RatePlanId pair (pre-selected the corporate rate, real price readable from the rendered page). This is a page-level UI parameter only, not a confirmed API query parameter — re-sniffing the `avail` call while this URL parameter is active would likely reveal the real parameter name and unblock wiring it into `rates search`. (Specific rate-plan IDs are sensitive — each one maps to a named corporation's negotiated price, so don't publish one alongside the company it belongs to.)
 - **`hotels alias`, `codes validate-*`, and `analytics price-drift` have no live-sandboxed test coverage** in this project's own dogfood matrix, which runs each command in an isolated, freshly-sandboxed local store and skips mutating commands by default. All three were verified working correctly by hand instead (including `hotels alias` under 27 concurrent invocations with zero errors) -- see the shipcheck proof for the exact commands run.
 
 ## HTTP Transport
