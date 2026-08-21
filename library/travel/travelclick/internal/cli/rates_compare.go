@@ -215,7 +215,7 @@ func computeLowestHotelRate(stays []types.AvailRoomStay, hotelID, alias string, 
 				var matches int
 				for _, nr := range rt.NightlyRates {
 					if nr.RatePlanCode == rpr.RatePlanCode {
-						cost += nr.AmtTotal + nr.TotalServiceChargeExclusive
+						cost += nr.AmtTotal + nr.TotalServiceChargeExclusive + nr.TotalResortFeeExclusive
 						matches++
 					}
 				}

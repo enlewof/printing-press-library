@@ -340,7 +340,7 @@
         "--dry-run"
       ],
       "status": "pass",
-      "output_sample": "  OK Config: ok\n  OK Auth: configured\n  OK Env Vars: OK 1/1 available\n  OK Verify Mode: normal operation\n  OK API: reachable\n  INFO Credentials: present, not verified. Run any read command to confirm the token works end-to-end.\n  config_path: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.config/travelclick-pp-cli/config.toml\n  base_url: https://api.travelclick.com\n  auth_source: env:TRAVELCLICK_TOKEN\n  credentials_location: env:TRAVELCLICK_TOKEN\n  version: 0.0.0-dev\n  Paths:\n    config: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.config/travelclick-pp-cli (XDG_CONFIG_HOME)\n    data: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.local/share/travelclick-pp-cli (XDG_DATA_HOME)\n    state: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.local/state/travelclick-pp-cli (XDG_STATE_HOME)\n    cache: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.cache/travelclick-pp-cli (XDG_CACHE_HOME)\nGET https://api.travelclick.com/\n  Authorization: ****\n\n(dry run - no request sent)\n"
+      "output_sample": "  OK Config: ok\n  OK Auth: configured\n  OK Env Vars: OK 1/1 available\n  OK Verify Mode: normal operation\n  OK API: reachable\n  INFO Credentials: present, not verified. Run any read command to confirm the token works end-to-end.\n  config_path: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.config/travelclick-pp-cli/config.toml\n  base_url: https://api.travelclick.com\n  auth_source: env:TRAVELCLICK_TOKEN\n  credentials_location: env:TRAVELCLICK_TOKEN\n  version: 0.0.0-dev\n  Paths:\n    config: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.config/travelclick-pp-cli (XDG_CONFIG_HOME)\n    data: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.local/share/travelclick-pp-cli (XDG_DATA_HOME)\n    state: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.local/state/travelclick-pp-cli (XDG_STATE_HOME)\n    cache: /var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.cache/travelclick-pp-cli (XDG_CACHE_HOME)\nGET https://api.travelclick.com/\n  Authorization: ****\n\n(dry run - no request sent)\n"
     },
     {
       "command": "doctor",
@@ -351,7 +351,7 @@
         "--json"
       ],
       "status": "pass",
-      "output_sample": "{\n  \"agentcookie\": \"not detected (optional)\",\n  \"api\": \"reachable\",\n  \"auth\": \"configured\",\n  \"auth_source\": \"env:TRAVELCLICK_TOKEN\",\n  \"base_url\": \"https://api.travelclick.com\",\n  \"config\": \"ok\",\n  \"config_path\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.config/travelclick-pp-cli/config.toml\",\n  \"credentials\": \"present, not verified. Run any read command to confirm the token works end-to-end.\",\n  \"credentials_location\": \"env:TRAVELCLICK_TOKEN\",\n  \"env_vars\": \"OK 1/1 available\",\n  \"paths\": {\n    \"cache\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.cache/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_CACHE_HOME\"\n    },\n    \"config\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.config/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_CONFIG_HOME\"\n    },\n    \"data\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.local/share/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_DATA_HOME\"\n    },\n    \"state\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-3146861405/.local/state/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_STATE_HOME\"\n    },\n    \"status\": \"ok\"\n  },\n  \"verify_mode\": \"normal operation\",\n  \"version\": \"0.0.0-dev\"\n}\nGET https://api.travelclick.com/\n  Authorization: ****\n\n(dry run - no request sent)\n"
+      "output_sample": "{\n  \"agentcookie\": \"not detected (optional)\",\n  \"api\": \"reachable\",\n  \"auth\": \"configured\",\n  \"auth_source\": \"env:TRAVELCLICK_TOKEN\",\n  \"base_url\": \"https://api.travelclick.com\",\n  \"config\": \"ok\",\n  \"config_path\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.config/travelclick-pp-cli/config.toml\",\n  \"credentials\": \"present, not verified. Run any read command to confirm the token works end-to-end.\",\n  \"credentials_location\": \"env:TRAVELCLICK_TOKEN\",\n  \"env_vars\": \"OK 1/1 available\",\n  \"paths\": {\n    \"cache\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.cache/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_CACHE_HOME\"\n    },\n    \"config\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.config/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_CONFIG_HOME\"\n    },\n    \"data\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.local/share/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_DATA_HOME\"\n    },\n    \"state\": {\n      \"dir\": \"/var/folders/z9/483b06nj2rxggkp02w95jg4m0000gr/T/printing-press-subprocess-2015858846/.local/state/travelclick-pp-cli\",\n      \"rung\": \"xdg-env\",\n      \"source\": \"XDG_STATE_HOME\"\n    },\n    \"status\": \"ok\"\n  },\n  \"verify_mode\": \"normal operation\",\n  \"version\": \"0.0.0-dev\"\n}\nGET https://api.travelclick.com/\n  Authorization: ****\n\n(dry run - no request sent)\n"
     },
     {
       "command": "doctor",
@@ -483,7 +483,7 @@
       ],
       "status": "pass",
       "exit_code": 5,
-      "output_sample": "Error: GET /ibe-entity/v1/hotel/__printing_press_invalid__/info returned HTTP 500: {\"errors\":[{\"errorCode\":\"INTERNAL_SERVER_ERROR\",\"errorMessage\":\"An unknown error has occurred.\"}], \"errorId\":\"4ad49ac0-4037-4248-9976-a0bdd0e60683-U\"}\n"
+      "output_sample": "Error: GET /ibe-entity/v1/hotel/__printing_press_invalid__/info returned HTTP 500: {\"errors\":[{\"errorCode\":\"INTERNAL_SERVER_ERROR\",\"errorMessage\":\"An unknown error has occurred.\"}], \"errorId\":\"7035e20a-268f-46bb-a533-cd1d8cde3a3b-U\"}\n"
     },
     {
       "command": "hotels",
@@ -659,7 +659,7 @@
         "list"
       ],
       "status": "pass",
-      "output_sample": "[\n  {\n    \"alias\": \"made-nyc\",\n    \"hotel_id\": \"102306\",\n    \"created_at\": \"2026-08-21T03:56:09Z\"\n  }\n]\n"
+      "output_sample": "[\n  {\n    \"alias\": \"made-nyc\",\n    \"hotel_id\": \"102306\",\n    \"created_at\": \"2026-08-21T04:17:40Z\"\n  }\n]\n"
     },
     {
       "command": "hotels alias list",
@@ -671,7 +671,7 @@
         "--json"
       ],
       "status": "pass",
-      "output_sample": "[\n  {\n    \"alias\": \"made-nyc\",\n    \"hotel_id\": \"102306\",\n    \"created_at\": \"2026-08-21T03:56:09Z\"\n  }\n]\n"
+      "output_sample": "[\n  {\n    \"alias\": \"made-nyc\",\n    \"hotel_id\": \"102306\",\n    \"created_at\": \"2026-08-21T04:17:40Z\"\n  }\n]\n"
     },
     {
       "command": "hotels alias list",
@@ -1852,5 +1852,5 @@
       "reason": "no positional argument"
     }
   ],
-  "ran_at": "2026-08-21T03:56:07.700229Z"
+  "ran_at": "2026-08-21T04:17:38.208189Z"
 }

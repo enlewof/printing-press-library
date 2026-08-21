@@ -89,8 +89,18 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				return printJSONFiltered(cmd.OutOrStdout(), emptyOutput, flags)
 			}
 
+			// Filter snapshots to the latest product to ensure consistent drift comparison
+			target := snapshots[len(snapshots)-1]
+			var filteredIndices []int
+			for i, sn := range snapshots {
+				if sn.RoomTypeCode == target.RoomTypeCode && sn.RatePlanCode == target.RatePlanCode && sn.CheckIn == target.CheckIn && sn.CheckOut == target.CheckOut {
+					filteredIndices = append(filteredIndices, i)
+				}
+			}
+
 			var timeline []PriceDriftTimelineEntry
-			for _, sn := range snapshots {
+			for _, idx := range filteredIndices {
+				sn := snapshots[idx]
 				timeline = append(timeline, PriceDriftTimelineEntry{
 					CapturedAt:   sn.CapturedAt,
 					NightlyRate:  sn.NightlyRate,
@@ -99,8 +109,8 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				})
 			}
 
-			earliest := snapshots[0].NightlyRate
-			latest := snapshots[len(snapshots)-1].NightlyRate
+			earliest := snapshots[filteredIndices[0]].NightlyRate
+			latest := snapshots[filteredIndices[len(filteredIndices)-1]].NightlyRate
 			drift := latest - earliest
 
 			output := PriceDriftOutput{
