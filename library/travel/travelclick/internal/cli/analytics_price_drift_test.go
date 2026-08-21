@@ -98,6 +98,45 @@ func TestSelectPriceDriftSeriesDeterministicAcrossShuffle(t *testing.T) {
 	}
 }
 
+func TestSelectPriceDriftSeriesTieBreaksByDatesThenCurrency(t *testing.T) {
+	// Same room/plan, same history length, same latest rate: only stay
+	// dates or currency differ. Map iteration must not decide the winner.
+	sep := []store.RateSnapshot{
+		driftSnapshot("102306", "KING", "BAR", "2026-09-15", "2026-09-18", "USD", "2026-08-01T00:00:00Z", 100),
+		driftSnapshot("102306", "KING", "BAR", "2026-09-15", "2026-09-18", "USD", "2026-08-10T00:00:00Z", 120),
+	}
+	oct := []store.RateSnapshot{
+		driftSnapshot("102306", "KING", "BAR", "2026-10-01", "2026-10-04", "USD", "2026-08-01T00:00:00Z", 100),
+		driftSnapshot("102306", "KING", "BAR", "2026-10-01", "2026-10-04", "USD", "2026-08-10T00:00:00Z", 120),
+	}
+	eur := []store.RateSnapshot{
+		driftSnapshot("102306", "KING", "BAR", "2026-09-15", "2026-09-18", "EUR", "2026-08-01T00:00:00Z", 100),
+		driftSnapshot("102306", "KING", "BAR", "2026-09-15", "2026-09-18", "EUR", "2026-08-10T00:00:00Z", 120),
+	}
+
+	dateOrders := [][]store.RateSnapshot{
+		append(append([]store.RateSnapshot{}, sep...), oct...),
+		append(append([]store.RateSnapshot{}, oct...), sep...),
+	}
+	for i, snaps := range dateOrders {
+		series := selectPriceDriftSeries(snaps)
+		if len(series) != 2 || series[0].CheckIn != "2026-09-15" || series[0].Currency != "USD" {
+			t.Fatalf("date order %d: expected Sept USD series, got %+v", i, series)
+		}
+	}
+
+	currencyOrders := [][]store.RateSnapshot{
+		append(append([]store.RateSnapshot{}, eur...), sep...),
+		append(append([]store.RateSnapshot{}, sep...), eur...),
+	}
+	for i, snaps := range currencyOrders {
+		series := selectPriceDriftSeries(snaps)
+		if len(series) != 2 || series[0].Currency != "EUR" || series[0].CheckIn != "2026-09-15" {
+			t.Fatalf("currency order %d: expected EUR before USD, got %+v", i, series)
+		}
+	}
+}
+
 func TestAnalyticsPriceDriftCommandSelectsLongestHistory(t *testing.T) {
 	testenv.Isolate(t, cliutil.DataDir)
 	ctx := context.Background()

@@ -173,7 +173,7 @@ func snapshotSeriesKey(sn store.RateSnapshot) priceDriftSeriesKey {
 // picks one series so drift never mixes room types, rate plans, stay
 // dates, or currencies. Among series present at the latest capture
 // timestamp, prefer the longest history, then cheapest latest nightly
-// rate, then lexicographic room_type_code and rate_plan_code.
+// rate, then lexicographic room, plan, check-in, check-out, and currency.
 func selectPriceDriftSeries(snapshots []store.RateSnapshot) []store.RateSnapshot {
 	if len(snapshots) == 0 {
 		return nil
@@ -239,5 +239,14 @@ func preferPriceDriftCandidate(a, b priceDriftSeriesCandidate) bool {
 	if a.key.roomTypeCode != b.key.roomTypeCode {
 		return a.key.roomTypeCode < b.key.roomTypeCode
 	}
-	return a.key.ratePlanCode < b.key.ratePlanCode
+	if a.key.ratePlanCode != b.key.ratePlanCode {
+		return a.key.ratePlanCode < b.key.ratePlanCode
+	}
+	if a.key.checkIn != b.key.checkIn {
+		return a.key.checkIn < b.key.checkIn
+	}
+	if a.key.checkOut != b.key.checkOut {
+		return a.key.checkOut < b.key.checkOut
+	}
+	return a.key.currency < b.key.currency
 }
