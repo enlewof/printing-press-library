@@ -24,6 +24,7 @@ type PriceDriftOutput struct {
 	EarliestRate float64                   `json:"earliest_rate"`
 	LatestRate   float64                   `json:"latest_rate"`
 	Drift        float64                   `json:"drift"`
+	Currency     string                    `json:"currency"`
 	Timeline     []PriceDriftTimelineEntry `json:"timeline"`
 }
 
@@ -119,14 +120,19 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				EarliestRate: earliest,
 				LatestRate:   latest,
 				Drift:        drift,
+				Currency:     target.Currency,
 				Timeline:     timeline,
+			}
+
+			if len(filteredIndices) == 1 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: only one snapshot found for currency %s; drift is 0.00\n", target.Currency)
 			}
 
 			if flags.asJSON || (!isTerminal(cmd.OutOrStdout()) && !flags.csv && !flags.quiet && !flags.plain) {
 				return printJSONFiltered(cmd.OutOrStdout(), output, flags)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Price Drift Analysis for Hotel %s (Alias: %s):\n", resolvedID, alias)
+			fmt.Fprintf(cmd.OutOrStdout(), "Price Drift Analysis for Hotel %s (Alias: %s, Currency: %s):\n", resolvedID, alias, target.Currency)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Earliest Rate: %.2f\n", earliest)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Latest Rate:   %.2f\n", latest)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Price Drift:   %+.2f\n\n", drift)
