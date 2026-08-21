@@ -174,7 +174,7 @@ func (s *Store) QueryRateSnapshots(ctx context.Context, hotelID string) ([]RateS
 		`SELECT id, hotel_id, check_in, check_out, room_type_code, room_type_name, rate_plan_code, rate_plan_name, nightly_rate, currency, captured_at
 		 FROM rate_snapshots
 		 WHERE hotel_id = ?
-		 ORDER BY captured_at ASC`,
+		 ORDER BY captured_at ASC, id ASC`,
 		hotelID,
 	)
 	if err != nil {

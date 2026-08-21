@@ -26,10 +26,15 @@ type CompareHotelResult struct {
 	Currency     string  `json:"currency"`
 	RoomTypeName string  `json:"room_type_name"`
 	RatePlanCode string  `json:"rate_plan_code"`
+	// FeeInclusive is true when LowestTotal comes from nightly AmtTotal
+	// plus service/resort fees. False means the hotel had no nightly
+	// totals and fell back to average-rate * nights (room-only).
+	FeeInclusive bool `json:"-"`
 }
 
 type CompareOutput struct {
 	Results       []CompareHotelResult `json:"results"`
+	Incomparable  []CompareHotelResult `json:"incomparable,omitempty"`
 	FetchFailures []map[string]any     `json:"fetch_failures,omitempty"`
 }
 
@@ -143,17 +148,14 @@ func newNovelRatesCompareCmd(flags *rootFlags) *cobra.Command {
 				}, nil
 			})
 
-			var finalResults []CompareHotelResult
+			var collected []CompareHotelResult
 			for _, r := range results {
 				if r.Value.hasRate {
-					finalResults = append(finalResults, r.Value.result)
+					collected = append(collected, r.Value.result)
 				}
 			}
 
-			// Sort by LowestTotal ascending
-			sort.Slice(finalResults, func(i, j int) bool {
-				return finalResults[i].LowestTotal < finalResults[j].LowestTotal
-			})
+			finalResults, incomparable := rankHotelCompareResults(collected)
 
 			var fetchFailures []map[string]any
 			for _, fe := range errs {
@@ -170,6 +172,7 @@ func newNovelRatesCompareCmd(flags *rootFlags) *cobra.Command {
 
 			output := CompareOutput{
 				Results:       finalResults,
+				Incomparable:  incomparable,
 				FetchFailures: fetchFailures,
 			}
 
@@ -194,7 +197,25 @@ func newNovelRatesCompareCmd(flags *rootFlags) *cobra.Command {
 				})
 			}
 
-			return flags.printTable(cmd, []string{"HOTEL_ID", "ALIAS", "ROOM_TYPE", "RATE_PLAN", "TOTAL_COST", "CURRENCY"}, rows)
+			if err := flags.printTable(cmd, []string{"HOTEL_ID", "ALIAS", "ROOM_TYPE", "RATE_PLAN", "TOTAL_COST", "CURRENCY"}, rows); err != nil {
+				return err
+			}
+			if len(incomparable) == 0 {
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Incomparable hotels (fee-exclusive average-rate fallback; not ranked against fee-inclusive totals):")
+			var extra [][]string
+			for _, item := range incomparable {
+				extra = append(extra, []string{
+					item.HotelID,
+					item.Alias,
+					item.RoomTypeName,
+					item.RatePlanCode,
+					fmt.Sprintf("%.2f", item.LowestTotal),
+					item.Currency,
+				})
+			}
+			return flags.printTable(cmd, []string{"HOTEL_ID", "ALIAS", "ROOM_TYPE", "RATE_PLAN", "ROOM_ONLY", "CURRENCY"}, extra)
 		},
 	}
 
@@ -252,8 +273,10 @@ func collectHotelRateCandidates(stays []types.AvailRoomStay, nights int) (inclus
 func computeLowestHotelRate(stays []types.AvailRoomStay, hotelID, alias string, nights int, currency string) (CompareHotelResult, bool) {
 	inclusive, exclusive := collectHotelRateCandidates(stays, nights)
 	pool := inclusive
+	feeInclusive := true
 	if len(pool) == 0 {
 		pool = exclusive
+		feeInclusive = false
 	}
 
 	var best CompareHotelResult
@@ -267,11 +290,45 @@ func computeLowestHotelRate(stays []types.AvailRoomStay, hotelID, alias string, 
 				Currency:     compareResultCurrency(currency),
 				RoomTypeName: c.roomTypeName,
 				RatePlanCode: c.ratePlanCode,
+				FeeInclusive: feeInclusive,
 			}
 			hasRate = true
 		}
 	}
 	return best, hasRate
+}
+
+// rankHotelCompareResults ranks hotels by LowestTotal only when those
+// totals are comparable. Fee-exclusive average-rate fallback hotels
+// cannot be ranked against fee-inclusive hotels: a room-only 300 would
+// otherwise beat a cheaper all-in 500. When every hotel is fallback-only,
+// ranking them against each other is apples-to-apples.
+func rankHotelCompareResults(hotels []CompareHotelResult) (ranked, incomparable []CompareHotelResult) {
+	hasInclusive := false
+	for _, h := range hotels {
+		if h.FeeInclusive {
+			hasInclusive = true
+			break
+		}
+	}
+	if hasInclusive {
+		for _, h := range hotels {
+			if h.FeeInclusive {
+				ranked = append(ranked, h)
+			} else {
+				incomparable = append(incomparable, h)
+			}
+		}
+	} else {
+		ranked = append(ranked, hotels...)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].LowestTotal < ranked[j].LowestTotal
+	})
+	sort.Slice(incomparable, func(i, j int) bool {
+		return incomparable[i].LowestTotal < incomparable[j].LowestTotal
+	})
+	return ranked, incomparable
 }
 
 // hotelResolution is the result of resolving one --hotels token (a raw hotel

@@ -113,6 +113,9 @@ func TestComputeLowestHotelRateFallback(t *testing.T) {
 	if best.RatePlanCode != "BAR" {
 		t.Errorf("expected rate plan BAR, got %s", best.RatePlanCode)
 	}
+	if best.FeeInclusive {
+		t.Errorf("expected fallback-only hotel to be fee-exclusive")
+	}
 }
 
 func TestComputeLowestHotelRatePrefersFeeInclusiveOverAverageFallback(t *testing.T) {
@@ -159,5 +162,105 @@ func TestComputeLowestHotelRatePrefersFeeInclusiveOverAverageFallback(t *testing
 	}
 	if best.Currency != "EUR" {
 		t.Errorf("expected payload currency EUR, got %s", best.Currency)
+	}
+	if !best.FeeInclusive {
+		t.Errorf("expected fee-inclusive result")
+	}
+}
+
+func feeInclusiveStay(total float64) []types.AvailRoomStay {
+	return []types.AvailRoomStay{
+		{
+			RoomTypes: []types.RoomType{
+				{
+					RoomTypeName: "Deluxe King",
+					AverageRates: []types.RatePlanRate{
+						{RatePlanCode: "BAR", Rate: total},
+					},
+					NightlyRates: []types.NightlyRate{
+						{
+							RatePlanCode:                "BAR",
+							AmtTotal:                    total,
+							TotalServiceChargeExclusive: 0,
+							TotalResortFeeExclusive:     0,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func fallbackOnlyStay(nightly float64) []types.AvailRoomStay {
+	return []types.AvailRoomStay{
+		{
+			RoomTypes: []types.RoomType{
+				{
+					RoomTypeName: "Suite",
+					AverageRates: []types.RatePlanRate{
+						{RatePlanCode: "AVG", Rate: nightly},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestRankHotelCompareResultsExcludesFeeExclusiveFallback(t *testing.T) {
+	hotelA, okA := computeLowestHotelRate(feeInclusiveStay(500), "hotel-a", "", 1, "USD")
+	if !okA {
+		t.Fatal("expected hotel A rate")
+	}
+	hotelB, okB := computeLowestHotelRate(fallbackOnlyStay(300), "hotel-b", "", 1, "USD")
+	if !okB {
+		t.Fatal("expected hotel B fallback rate")
+	}
+	if hotelA.LowestTotal != 500 || !hotelA.FeeInclusive {
+		t.Fatalf("hotel A: total=%f inclusive=%v", hotelA.LowestTotal, hotelA.FeeInclusive)
+	}
+	if hotelB.LowestTotal != 300 || hotelB.FeeInclusive {
+		t.Fatalf("hotel B: total=%f inclusive=%v", hotelB.LowestTotal, hotelB.FeeInclusive)
+	}
+
+	ranked, incomparable := rankHotelCompareResults([]CompareHotelResult{hotelB, hotelA})
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 comparable hotel, got %d: %+v", len(ranked), ranked)
+	}
+	if ranked[0].HotelID != "hotel-a" {
+		t.Fatalf("expected hotel A to win comparable ranking, got %s", ranked[0].HotelID)
+	}
+	if ranked[0].LowestTotal != 500 {
+		t.Fatalf("expected hotel A total 500, got %f", ranked[0].LowestTotal)
+	}
+	if len(incomparable) != 1 || incomparable[0].HotelID != "hotel-b" {
+		t.Fatalf("expected hotel B in incomparable list, got %+v", incomparable)
+	}
+}
+
+func TestRankHotelCompareResultsFallbackOnlyHotelsRankTogether(t *testing.T) {
+	cheap, okCheap := computeLowestHotelRate(fallbackOnlyStay(100), "cheap", "", 3, "EUR")
+	if !okCheap {
+		t.Fatal("expected cheap fallback rate")
+	}
+	pricey, okPricey := computeLowestHotelRate(fallbackOnlyStay(180), "pricey", "", 3, "EUR")
+	if !okPricey {
+		t.Fatal("expected pricey fallback rate")
+	}
+	if cheap.LowestTotal != 300 || pricey.LowestTotal != 540 {
+		t.Fatalf("fallback totals cheap=%f pricey=%f", cheap.LowestTotal, pricey.LowestTotal)
+	}
+
+	ranked, incomparable := rankHotelCompareResults([]CompareHotelResult{pricey, cheap})
+	if len(incomparable) != 0 {
+		t.Fatalf("expected no incomparable hotels when all are fallback-only, got %+v", incomparable)
+	}
+	if len(ranked) != 2 {
+		t.Fatalf("expected both fallback hotels ranked, got %d", len(ranked))
+	}
+	if ranked[0].HotelID != "cheap" || ranked[0].LowestTotal != 300 {
+		t.Fatalf("expected cheap hotel first by average*nights, got %+v", ranked[0])
+	}
+	if ranked[1].HotelID != "pricey" {
+		t.Fatalf("expected pricey hotel second, got %+v", ranked[1])
 	}
 }

@@ -7,7 +7,9 @@ package cli
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/mvanhorn/printing-press-library/library/travel/travelclick/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -90,18 +92,11 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				return printJSONFiltered(cmd.OutOrStdout(), emptyOutput, flags)
 			}
 
-			// Filter snapshots to the latest product and currency to ensure consistent drift comparison
-			target := snapshots[len(snapshots)-1]
-			var filteredIndices []int
-			for i, sn := range snapshots {
-				if sn.RoomTypeCode == target.RoomTypeCode && sn.RatePlanCode == target.RatePlanCode && sn.CheckIn == target.CheckIn && sn.CheckOut == target.CheckOut && sn.Currency == target.Currency {
-					filteredIndices = append(filteredIndices, i)
-				}
-			}
+			series := selectPriceDriftSeries(snapshots)
+			target := series[len(series)-1]
 
 			var timeline []PriceDriftTimelineEntry
-			for _, idx := range filteredIndices {
-				sn := snapshots[idx]
+			for _, sn := range series {
 				timeline = append(timeline, PriceDriftTimelineEntry{
 					CapturedAt:   sn.CapturedAt,
 					NightlyRate:  sn.NightlyRate,
@@ -110,8 +105,8 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				})
 			}
 
-			earliest := snapshots[filteredIndices[0]].NightlyRate
-			latest := snapshots[filteredIndices[len(filteredIndices)-1]].NightlyRate
+			earliest := series[0].NightlyRate
+			latest := target.NightlyRate
 			drift := latest - earliest
 
 			output := PriceDriftOutput{
@@ -124,7 +119,7 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				Timeline:     timeline,
 			}
 
-			if len(filteredIndices) == 1 {
+			if len(series) == 1 {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: only one snapshot found for currency %s; drift is 0.00\n", target.Currency)
 			}
 
@@ -154,4 +149,95 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().StringVar(&flagHotel, "hotel", "", "Hotel ID or alias to analyze")
 
 	return cmd
+}
+
+type priceDriftSeriesKey struct {
+	roomTypeCode string
+	ratePlanCode string
+	checkIn      string
+	checkOut     string
+	currency     string
+}
+
+func snapshotSeriesKey(sn store.RateSnapshot) priceDriftSeriesKey {
+	return priceDriftSeriesKey{
+		roomTypeCode: sn.RoomTypeCode,
+		ratePlanCode: sn.RatePlanCode,
+		checkIn:      sn.CheckIn,
+		checkOut:     sn.CheckOut,
+		currency:     sn.Currency,
+	}
+}
+
+// selectPriceDriftSeries groups snapshots by product+dates+currency and
+// picks one series so drift never mixes room types, rate plans, stay
+// dates, or currencies. Among series present at the latest capture
+// timestamp, prefer the longest history, then cheapest latest nightly
+// rate, then lexicographic room_type_code and rate_plan_code.
+func selectPriceDriftSeries(snapshots []store.RateSnapshot) []store.RateSnapshot {
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	groups := make(map[priceDriftSeriesKey][]store.RateSnapshot, len(snapshots))
+	latestAt := snapshots[0].CapturedAt
+	for _, sn := range snapshots {
+		k := snapshotSeriesKey(sn)
+		groups[k] = append(groups[k], sn)
+		if sn.CapturedAt > latestAt {
+			latestAt = sn.CapturedAt
+		}
+	}
+
+	var cands []priceDriftSeriesCandidate
+	for k, series := range groups {
+		sort.Slice(series, func(i, j int) bool {
+			if series[i].CapturedAt != series[j].CapturedAt {
+				return series[i].CapturedAt < series[j].CapturedAt
+			}
+			return series[i].ID < series[j].ID
+		})
+		var latestRate float64
+		seenLatest := false
+		for _, sn := range series {
+			if sn.CapturedAt == latestAt {
+				seenLatest = true
+				latestRate = sn.NightlyRate
+			}
+		}
+		if !seenLatest {
+			continue
+		}
+		cands = append(cands, priceDriftSeriesCandidate{key: k, series: series, latestRate: latestRate})
+	}
+	if len(cands) == 0 {
+		return snapshots
+	}
+
+	best := cands[0]
+	for _, c := range cands[1:] {
+		if preferPriceDriftCandidate(c, best) {
+			best = c
+		}
+	}
+	return best.series
+}
+
+type priceDriftSeriesCandidate struct {
+	key        priceDriftSeriesKey
+	series     []store.RateSnapshot
+	latestRate float64
+}
+
+func preferPriceDriftCandidate(a, b priceDriftSeriesCandidate) bool {
+	if len(a.series) != len(b.series) {
+		return len(a.series) > len(b.series)
+	}
+	if a.latestRate != b.latestRate {
+		return a.latestRate < b.latestRate
+	}
+	if a.key.roomTypeCode != b.key.roomTypeCode {
+		return a.key.roomTypeCode < b.key.roomTypeCode
+	}
+	return a.key.ratePlanCode < b.key.ratePlanCode
 }
