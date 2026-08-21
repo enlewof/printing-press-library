@@ -122,7 +122,8 @@ func newNovelRatesCompareCmd(flags *rootFlags) *cobra.Command {
 				}
 
 				var envelope struct {
-					RoomStays []types.AvailRoomStay `json:"roomStays"`
+					RoomStays    []types.AvailRoomStay `json:"roomStays"`
+					CurrencyCode string                `json:"currencyCode"`
 				}
 				if err := json.Unmarshal(data, &envelope); err != nil {
 					return fetchResult{}, err
@@ -135,7 +136,7 @@ func newNovelRatesCompareCmd(flags *rootFlags) *cobra.Command {
 					nights = 1
 				}
 
-				best, hasRate := computeLowestHotelRate(envelope.RoomStays, resolvedID, alias, nights)
+				best, hasRate := computeLowestHotelRate(envelope.RoomStays, resolvedID, alias, nights, envelope.CurrencyCode)
 				return fetchResult{
 					result:  best,
 					hasRate: hasRate,
@@ -204,10 +205,20 @@ func newNovelRatesCompareCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func computeLowestHotelRate(stays []types.AvailRoomStay, hotelID, alias string, nights int) (CompareHotelResult, bool) {
-	var best CompareHotelResult
-	hasRate := false
+func compareResultCurrency(payloadCurrency string) string {
+	if c := strings.TrimSpace(payloadCurrency); c != "" {
+		return c
+	}
+	return "USD"
+}
 
+type hotelRateCandidate struct {
+	cost         float64
+	roomTypeName string
+	ratePlanCode string
+}
+
+func collectHotelRateCandidates(stays []types.AvailRoomStay, nights int) (inclusive, exclusive []hotelRateCandidate) {
 	for _, stay := range stays {
 		for _, rt := range stay.RoomTypes {
 			for _, rpr := range rt.AverageRates {
@@ -219,24 +230,45 @@ func computeLowestHotelRate(stays []types.AvailRoomStay, hotelID, alias string, 
 						matches++
 					}
 				}
-				if matches == 0 {
-					cost = rpr.Rate * float64(nights)
-				}
-
-				if cost > 0 {
-					if !hasRate || cost < best.LowestTotal {
-						best = CompareHotelResult{
-							HotelID:      hotelID,
-							Alias:        alias,
-							LowestTotal:  cost,
-							Currency:     "USD",
-							RoomTypeName: rt.RoomTypeName,
-							RatePlanCode: rpr.RatePlanCode,
-						}
-						hasRate = true
+				if matches > 0 {
+					if cost > 0 {
+						inclusive = append(inclusive, hotelRateCandidate{cost, rt.RoomTypeName, rpr.RatePlanCode})
 					}
+					continue
+				}
+				// RatePlanRate has no fee fields. Do not invent them, and do
+				// not let room-only average*nights compete with fee-inclusive
+				// nightly totals from other plans at the same hotel.
+				fallback := rpr.Rate * float64(nights)
+				if fallback > 0 {
+					exclusive = append(exclusive, hotelRateCandidate{fallback, rt.RoomTypeName, rpr.RatePlanCode})
 				}
 			}
+		}
+	}
+	return inclusive, exclusive
+}
+
+func computeLowestHotelRate(stays []types.AvailRoomStay, hotelID, alias string, nights int, currency string) (CompareHotelResult, bool) {
+	inclusive, exclusive := collectHotelRateCandidates(stays, nights)
+	pool := inclusive
+	if len(pool) == 0 {
+		pool = exclusive
+	}
+
+	var best CompareHotelResult
+	hasRate := false
+	for _, c := range pool {
+		if !hasRate || c.cost < best.LowestTotal {
+			best = CompareHotelResult{
+				HotelID:      hotelID,
+				Alias:        alias,
+				LowestTotal:  c.cost,
+				Currency:     compareResultCurrency(currency),
+				RoomTypeName: c.roomTypeName,
+				RatePlanCode: c.ratePlanCode,
+			}
+			hasRate = true
 		}
 	}
 	return best, hasRate

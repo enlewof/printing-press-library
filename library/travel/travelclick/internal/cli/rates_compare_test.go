@@ -61,7 +61,7 @@ func TestComputeLowestHotelRate(t *testing.T) {
 		},
 	}
 
-	best, hasRate := computeLowestHotelRate(stays, "102306", "made-nyc", 2)
+	best, hasRate := computeLowestHotelRate(stays, "102306", "made-nyc", 2, "")
 	if !hasRate {
 		t.Fatalf("expected to find a rate")
 	}
@@ -76,10 +76,15 @@ func TestComputeLowestHotelRate(t *testing.T) {
 	if best.RatePlanCode != "MEM" {
 		t.Errorf("expected rate plan MEM, got %s", best.RatePlanCode)
 	}
+	if best.Currency != "USD" {
+		t.Errorf("expected default currency USD when payload has none, got %s", best.Currency)
+	}
 }
 
 func TestComputeLowestHotelRateFallback(t *testing.T) {
-	// Test fallback when NightlyRates are missing
+	// Hotel-wide fallback: no matching nightly rows exist at all, so
+	// compare still returns average*nights. This must not run when any
+	// fee-inclusive nightly total is available (see mixed-plan test).
 	stays := []types.AvailRoomStay{
 		{
 			RoomTypes: []types.RoomType{
@@ -96,16 +101,63 @@ func TestComputeLowestHotelRateFallback(t *testing.T) {
 		},
 	}
 
-	best, hasRate := computeLowestHotelRate(stays, "102306", "made-nyc", 3)
+	best, hasRate := computeLowestHotelRate(stays, "102306", "made-nyc", 3, "")
 	if !hasRate {
 		t.Fatalf("expected to find a rate")
 	}
 
-	// 300.0 * 3 nights = 900.0
+	// 300.0 * 3 nights = 900.0, used only because this hotel has zero nightly totals.
 	if best.LowestTotal != 900.0 {
 		t.Errorf("expected lowest total to be 900.0, got %f", best.LowestTotal)
 	}
 	if best.RatePlanCode != "BAR" {
 		t.Errorf("expected rate plan BAR, got %s", best.RatePlanCode)
+	}
+}
+
+func TestComputeLowestHotelRatePrefersFeeInclusiveOverAverageFallback(t *testing.T) {
+	// CHEAP has no nightly rows. Its room-only average*nights (100*3=300)
+	// would beat BAR's fee-inclusive nightly total (400+50+50=500) if the
+	// per-plan fallback were allowed to compete. BAR must win.
+	stays := []types.AvailRoomStay{
+		{
+			RoomTypes: []types.RoomType{
+				{
+					RoomTypeName: "Deluxe King",
+					AverageRates: []types.RatePlanRate{
+						{
+							RatePlanCode: "BAR",
+							Rate:         400.0,
+						},
+						{
+							RatePlanCode: "CHEAP",
+							Rate:         100.0,
+						},
+					},
+					NightlyRates: []types.NightlyRate{
+						{
+							RatePlanCode:                "BAR",
+							AmtTotal:                    400.0,
+							TotalServiceChargeExclusive: 50.0,
+							TotalResortFeeExclusive:     50.0,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	best, hasRate := computeLowestHotelRate(stays, "102306", "made-nyc", 3, "EUR")
+	if !hasRate {
+		t.Fatalf("expected to find a rate")
+	}
+	if best.RatePlanCode != "BAR" {
+		t.Errorf("expected fee-inclusive plan BAR to win, got %s", best.RatePlanCode)
+	}
+	if best.LowestTotal != 500.0 {
+		t.Errorf("expected fee-inclusive total 500.0, got %f", best.LowestTotal)
+	}
+	if best.Currency != "EUR" {
+		t.Errorf("expected payload currency EUR, got %s", best.Currency)
 	}
 }
