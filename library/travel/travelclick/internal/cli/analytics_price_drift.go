@@ -89,11 +89,11 @@ func newNovelAnalyticsPriceDriftCmd(flags *rootFlags) *cobra.Command {
 				return printJSONFiltered(cmd.OutOrStdout(), emptyOutput, flags)
 			}
 
-			// Filter snapshots to the latest product to ensure consistent drift comparison
+			// Filter snapshots to the latest product and currency to ensure consistent drift comparison
 			target := snapshots[len(snapshots)-1]
 			var filteredIndices []int
 			for i, sn := range snapshots {
-				if sn.RoomTypeCode == target.RoomTypeCode && sn.RatePlanCode == target.RatePlanCode && sn.CheckIn == target.CheckIn && sn.CheckOut == target.CheckOut {
+				if sn.RoomTypeCode == target.RoomTypeCode && sn.RatePlanCode == target.RatePlanCode && sn.CheckIn == target.CheckIn && sn.CheckOut == target.CheckOut && sn.Currency == target.Currency {
 					filteredIndices = append(filteredIndices, i)
 				}
 			}

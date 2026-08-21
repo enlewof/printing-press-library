@@ -12,7 +12,7 @@
     "type": "none",
     "api_key_available": true
   },
-  "source_fingerprint": "f5fc53cb1499cc5a7a6128356d8b5cf0848040b56ec7dc111c209e6253453d8d",
+  "source_fingerprint": "00af5b663f14c9b8cc01f9187205f93abe75da3d7900cf197ac93b1369b81980",
   "source_files": {
     "cmd/travelclick-pp-cli/main.go": "37b1a1c10fbb82c9c51e458f140c4a73dcc10bd3c484b6c1e0fdf40a178b06e4",
     "cmd/travelclick-pp-mcp/main.go": "cfe262175408e31ec4db282f2358cb486416eedd679379928c38ecda55230096",
@@ -21,7 +21,7 @@
     "internal/cache/cache.go": "dd18bc27443b0d33c2d0ad4f255b8aae7e37fa0ee279ebc84687641098a4eda4",
     "internal/cli/agent_context.go": "6141aec64e7161648443e2f5581a32e45b50a85be690aa8fddfdc56112f09f26",
     "internal/cli/analytics.go": "e0d42679e1705623e03b2566d809a5fef2afd89508b3b62c29106b7620e5c269",
-    "internal/cli/analytics_price_drift.go": "84918fa1cd213d9facd49282e712e2c74b85a295fa2796f1db646223955a0056",
+    "internal/cli/analytics_price_drift.go": "9d6a1e35bdf1557dc531be7cb647c6e5e5cab4105c1842a0dbe404d38f206b2f",
     "internal/cli/analytics_price_drift_test.go": "c1c59e6378e8974e604aaf6cb676e328a4f6e5f6e404c50ea621a813723b864b",
     "internal/cli/api_discovery.go": "709afb49c45640ec3fdf19342f55813349e0095708e424d691f8e8bc42c729bc",
     "internal/cli/auth.go": "8d0ab37bbc3ed7126336ebf0920004e2088dab28600d2518ad8ae17a997b182b",
