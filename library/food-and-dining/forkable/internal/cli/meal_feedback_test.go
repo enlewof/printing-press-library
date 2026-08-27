@@ -15,6 +15,7 @@ package cli
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestMealFeedbackMechanismFor(t *testing.T) {
@@ -125,16 +126,42 @@ func TestAppendAndReadMealFeedback(t *testing.T) {
 	}
 }
 
-// TestMealFeedbackNoteTruncation guards the same truncation contract
-// feedback.go established for CLI-feedback text, applied here to the
-// meal-issue note.
-func TestMealFeedbackNoteTruncation(t *testing.T) {
-	longNote := strings.Repeat("x", mealFeedbackMaxNoteLen+500)
-	truncated := longNote
-	if len(truncated) > mealFeedbackMaxNoteLen {
-		truncated = truncated[:mealFeedbackMaxNoteLen]
-	}
-	if len(truncated) != mealFeedbackMaxNoteLen {
-		t.Fatalf("truncated note length = %d, want %d", len(truncated), mealFeedbackMaxNoteLen)
-	}
+// TestTruncateValidUTF8 guards the same truncation contract feedback.go
+// established for CLI-feedback text, applied here to the meal-issue note --
+// plus the UTF-8-boundary case a plain byte-index slice gets wrong (a
+// multibyte rune straddling the cut point must be dropped whole, not left
+// as a partial/invalid tail that round-trips through JSON as U+FFFD).
+func TestTruncateValidUTF8(t *testing.T) {
+	t.Run("under limit is untouched", func(t *testing.T) {
+		s := "short note"
+		if got := truncateValidUTF8(s, mealFeedbackMaxNoteLen); got != s {
+			t.Errorf("truncateValidUTF8(%q, %d) = %q, want unchanged", s, mealFeedbackMaxNoteLen, got)
+		}
+	})
+
+	t.Run("ASCII over limit truncates to exact length", func(t *testing.T) {
+		longNote := strings.Repeat("x", mealFeedbackMaxNoteLen+500)
+		got := truncateValidUTF8(longNote, mealFeedbackMaxNoteLen)
+		if len(got) != mealFeedbackMaxNoteLen {
+			t.Fatalf("len(truncateValidUTF8(...)) = %d, want %d", len(got), mealFeedbackMaxNoteLen)
+		}
+		if !utf8.ValidString(got) {
+			t.Fatalf("truncateValidUTF8(...) = %q, want valid UTF-8", got)
+		}
+	})
+
+	t.Run("multibyte rune straddling the cut point is dropped whole", func(t *testing.T) {
+		// "café" ends in a 2-byte rune (é). Cut at len("caf")+1 = 4 bytes,
+		// landing exactly inside that rune's second byte -- a bare
+		// s[:4] would keep the first byte of "é" as an invalid trailing byte.
+		s := "café"
+		cut := len("caf") + 1
+		got := truncateValidUTF8(s, cut)
+		if !utf8.ValidString(got) {
+			t.Fatalf("truncateValidUTF8(%q, %d) = %q, want valid UTF-8", s, cut, got)
+		}
+		if got != "caf" {
+			t.Errorf("truncateValidUTF8(%q, %d) = %q, want %q (the straddling rune dropped whole)", s, cut, got, "caf")
+		}
+	})
 }
