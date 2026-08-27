@@ -105,7 +105,7 @@ func newNovelMarketGetCmd(flags *rootFlags) *cobra.Command {
 			}
 			err = client.Query(ctx, query, map[string]any{"id": id}, &result)
 			if err != nil {
-				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("market not found: %w", err), flags)
+				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching market: %w", err), flags)
 			}
 			if result.Market == nil {
 				return notFoundErr(fmt.Errorf("market not found: %d", id))
@@ -189,7 +189,7 @@ func newNovelMarketListCmd(flags *rootFlags) *cobra.Command {
 			}
 			err = client.Query(ctx, query, map[string]any{"id": id}, &result)
 			if err != nil {
-				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("market not found: %w", err), flags)
+				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching market: %w", err), flags)
 			}
 			if result.Market == nil {
 				return notFoundErr(fmt.Errorf("market not found: %d", id))

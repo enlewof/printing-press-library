@@ -98,7 +98,7 @@ func runMarketHotlist(ctx context.Context, cmd *cobra.Command, flags *rootFlags,
 	}
 	err = client.Query(ctx, query, map[string]any{"id": id}, &mResult)
 	if err != nil {
-		return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("market not found: %w", err), flags)
+		return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching market: %w", err), flags)
 	}
 	if mResult.Market == nil {
 		return notFoundErr(fmt.Errorf("market not found: %d", id))

@@ -103,7 +103,7 @@ func runTruckSchedule(ctx context.Context, cmd *cobra.Command, flags *rootFlags,
 	}
 	err := client.Query(ctx, query, map[string]any{"id": id}, &result)
 	if err != nil {
-		return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("truck not found: %w", err), flags)
+		return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching truck schedule: %w", err), flags)
 	}
 	if result.Truck == nil {
 		return notFoundErr(fmt.Errorf("truck not found: %d", id))

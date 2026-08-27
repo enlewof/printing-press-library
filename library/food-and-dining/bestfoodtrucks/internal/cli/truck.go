@@ -86,7 +86,7 @@ func newNovelTruckGetCmd(flags *rootFlags) *cobra.Command {
 			}
 			err = client.Query(ctx, query, map[string]any{"id": id}, &result)
 			if err != nil {
-				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("truck not found: %w", err), flags)
+				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching truck: %w", err), flags)
 			}
 			if result.Truck == nil {
 				return notFoundErr(fmt.Errorf("truck not found: %d", id))

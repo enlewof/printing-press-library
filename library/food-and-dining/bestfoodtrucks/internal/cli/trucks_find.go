@@ -92,7 +92,7 @@ func newNovelTrucksFindCmd(flags *rootFlags) *cobra.Command {
 			}
 			err := client.Query(ctx, query, map[string]any{"seoName": flagLot, "days": days}, &schedRes)
 			if err != nil {
-				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("lot not found: %w", err), flags)
+				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching lot schedule: %w", err), flags)
 			}
 			if schedRes.Lot == nil {
 				return notFoundErr(fmt.Errorf("lot not found: %s", flagLot))

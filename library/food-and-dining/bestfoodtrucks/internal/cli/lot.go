@@ -123,7 +123,7 @@ func newNovelLotGetCmd(flags *rootFlags) *cobra.Command {
 			}
 			err := client.Query(ctx, query, map[string]any{"seoName": seoName}, &result)
 			if err != nil {
-				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("lot not found: %w", err), flags)
+				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching lot: %w", err), flags)
 			}
 			if result.Lot == nil {
 				return notFoundErr(fmt.Errorf("lot not found: %s", seoName))
@@ -246,7 +246,7 @@ func newNovelLotScheduleCmd(flags *rootFlags) *cobra.Command {
 			}
 			err := client.Query(ctx, query, map[string]any{"seoName": seoName, "days": days}, &result)
 			if err != nil {
-				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("lot not found: %w", err), flags)
+				return classifyAPIError(cmd.OutOrStdout(), fmt.Errorf("fetching lot: %w", err), flags)
 			}
 			if result.Lot == nil {
 				return notFoundErr(fmt.Errorf("lot not found: %s", seoName))
