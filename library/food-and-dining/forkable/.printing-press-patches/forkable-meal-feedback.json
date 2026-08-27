@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "id": "forkable-meal-feedback",
+  "applied_at": "2026-08-27",
+  "base_run_id": "20260717-100008-2c197495",
+  "base_printing_press_version": "4.28.0",
+  "summary": "Add `meal feedback <deliveryId>` and `meal feedback list` — reports a problem with a delivered meal (missing/wrong item, quality, late) to real Forkable support via POST /submit_contact_form, the my-account app's own REST 'Contact Support' endpoint (not GraphQL). Extends needsCSRF in internal/client/forkable_csrf.go to cover that route.",
+  "reason": "Forkable's my-account SPA exposes exactly four GraphQL account-mutating operations (replacePiece, replaceAllPieces, confirmDelivery, removeDelivery(-ies)); none represent reporting a problem with a delivered meal. The top-level `feedback` command is explicitly CLI-tool-friction-only and never reaches Forkable. Static analysis of the my-account SPA bundle (mc/js/app.*.js, module 29822: getSubjectOptions()/submitContactForm()) found a real, separate REST submission path the product's own 'Contact Support' modal uses: POST https://forkable.com/submit_contact_form with {name, email, subject, message, market_id}, authenticated with the same session cookie + x-csrf-token as GraphQL. --category maps to Forkable's own subject list (missing-item->\"Missing Meal\", wrong-item/quality->\"Report Issue\", late->\"Delivery Status\", other->\"General Inquiry\"). name/email are resolved via a live `me` query; market_id via a live myDeliveries lookup (best-effort -- omitted if not resolved). Dry-run by default and --confirm-gated like the four GraphQL mutations, using the same confirmOrPreview/emitDryRunShortCircuit helpers. Every attempt is also appended to a local meal-feedback.jsonl ledger. Not registered as an MCP tool, matching the existing precedent that feedback and all four meal write commands are excluded from the public MCP tool set.",
+  "files": [
+    "internal/cli/meal_feedback.go",
+    "internal/cli/meal_feedback_test.go",
+    "internal/cli/forkable_orders.go",
+    "internal/client/forkable_csrf.go",
+    "SKILL.md",
+    "README.md"
+  ],
+  "call_sites": ["newMealFeedbackCmd(flags)", "submitContactForm(", "contactFormPath"],
+  "validated_outcome": "go build/vet/test clean (4 pre-existing, unrelated internal/cliutil credentials_test.go failures, and the pre-existing phase5/govulncheck findings from stale version-ledger drift and a Go 1.26.5-vs-1.26.6 stdlib CVE gap, all confirmed present on a clean upstream/main checkout before this patch). Dogfooded live end to end against the real account: preview (no --confirm) correctly resolved real name/email via `me` and market_id via myDeliveries, then `meal feedback 1241916 --category missing-item --confirm` returned submitted:true (HTTP 2xx from the real POST /submit_contact_form) and round-tripped through `meal feedback list --agent`. Usage errors (missing --note, invalid --category) correctly exit 2.",
+  "findings_addressed": ["F1"]
+}

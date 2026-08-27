@@ -37,7 +37,7 @@ go install github.com/mvanhorn/printing-press-library/library/food-and-dining/fo
 
 If `--version` reports "command not found" after install, the runtime cannot see the binary directory on `$PATH`. Do not proceed with skill commands until verification succeeds.
 
-Forkable exposes no public API. This CLI reverse-engineers the my-account app's GraphQL surface into a Go binary with clean read commands and agent-native output. On top of the raw reads it adds longitudinal views the product never shows — served-meal history, preference-vs-served drift, spend trends, allowance utilization, venue rotation, and a week-ahead digest — all fetched live from Forkable. It also exposes the my-account app's own meal-management mutations as meal set, meal set-all, meal confirm, meal skip, and reorder; these are dry-run by default and only place, confirm, or skip real orders when you pass --confirm.
+Forkable exposes no public API. This CLI reverse-engineers the my-account app's GraphQL surface into a Go binary with clean read commands and agent-native output. On top of the raw reads it adds longitudinal views the product never shows — served-meal history, preference-vs-served drift, spend trends, allowance utilization, venue rotation, and a week-ahead digest — all fetched live from Forkable. It also exposes the my-account app's own meal-management mutations as meal set, meal set-all, meal confirm, meal skip, and reorder; these are dry-run by default and only place, confirm, or skip real orders when you pass --confirm. A fifth meal command, `meal feedback`, reports a problem with a delivered meal (missing/wrong item, quality) straight to Forkable support — not via GraphQL, but via the same REST "Contact Support" endpoint the my-account app's own support modal posts to (discovered by static analysis of the app's JS bundle); see the Command Reference below.
 
 ## When to Use This CLI
 
@@ -49,6 +49,7 @@ Do not use this CLI for:
 - Do not place, change, or cancel meal orders without explicit user intent — the `meal set`, `meal set-all`, `meal confirm`, `meal skip`, and `reorder` commands mutate the real account and require `--confirm`; run them dry-run first and confirm the printed mutation before adding `--confirm`.
 - Do not use this CLI to add or remove club members or manage billing — use the Forkable web app.
 - Do not use this CLI for real-time delivery tracking notifications — those come via Forkable's email/Slack/SMS.
+- Do not run `meal feedback ... --confirm` without explicit user intent — like the four mutation commands above, it is a real, one-way action: it files an actual support request with Forkable (not a GraphQL mutation, but a real POST to Forkable's contact-support endpoint) and cannot be un-sent. Preview it first (the default, no-`--confirm` behavior) and confirm the printed request before adding `--confirm`.
 
 ## Unique Capabilities
 
@@ -159,6 +160,9 @@ These capabilities aren't available in any other tool for this API.
 - `forkable-pp-cli meal confirm <deliveryId> [--unconfirm] [--confirm]` — Confirm (or `--unconfirm`) a delivery day (`confirmDelivery`).
 - `forkable-pp-cli meal skip <deliveryId> [--confirm]` — Skip / cancel one or more delivery days (`removeDelivery`); `--deliveries <id,id>` skips several.
 - `forkable-pp-cli reorder <fromDate> --onto <deliveryId> [--replace-piece <uuid>] [--confirm]` — Repeat the meal you had on a past date onto an upcoming delivery day.
+- `forkable-pp-cli meal feedback <deliveryId> --category <missing-item|wrong-item|quality|late|other> --note <text> [--item <name>] [--venue <name>] [--piece <uuid>] [--confirm]` — Report a problem with a delivered meal to real Forkable support. Dry-run by default like the four mutations above. `forkable-pp-cli meal feedback list [--limit N]` lists this CLI's own local record of past attempts.
+
+**`meal feedback` is not a GraphQL mutation — it POSTs to Forkable's REST "Contact Support" endpoint.** None of the four GraphQL mutations above represent "something was wrong with this delivery," but the my-account app's own Support modal does have a real submission path: `POST https://forkable.com/submit_contact_form` with `{name, email, subject, message, market_id}`, discovered by static analysis of the app's JS bundle (`mc/js/app.*.js`, module 29822's `getSubjectOptions()`/`submitContactForm()`). `--category` maps to Forkable's own subject list (`missing-item`→"Missing Meal", `wrong-item`/`quality`→"Report Issue", `late`→"Delivery Status", `other`→"General Inquiry"); the delivery id/venue/item/piece have no dedicated field on that form, so they're folded into the message text alongside `--note`. Building an accurate preview requires two live reads first (your name/email, and the delivery's market id) — even the no-`--confirm` preview touches the network, unlike the other four mutations which preview fully offline. Every attempt (submitted or not) is also appended to a local `meal-feedback.jsonl` ledger under the CLI's data dir, separate from the top-level `feedback` command (which is for friction with this *CLI*, not with a *meal*).
 
 **`--replace-piece` is effectively always required for `meal set` and `reorder`.** Forkable auto-selects a candidate meal for every delivery day before you ever touch it — in practice there is no delivery day with a genuinely empty slot, so omitting `--replace-piece` is a rare/theoretical path, not the default case. **Dry-run mode does not validate this.** A dry-run without `--replace-piece` renders a plausible-looking mutation preview and only fails at `--confirm` time, with a raw GraphQL error (`oldPieceId ... Expected value to not be null`). Before running `--confirm`, always look up the target delivery's current piece id via `deliveries list` (its `orders[].pieces[].id`) and pass it with `--replace-piece`. `meal set-all` has no `--replace-piece` flag — `replaceAllPieces` takes no old-piece id at all, so this caveat doesn't apply to it.
 
@@ -217,6 +221,15 @@ forkable-pp-cli upcoming-digest --agent
 
 One compact line per upcoming day for a quick agent-readable briefing.
 
+### Flag a problem with today's meal
+
+```bash
+forkable-pp-cli meal feedback 12345 --category missing-item --note "Rice was missing from the order" --item "Example Item" --venue "Example Venue" --confirm
+forkable-pp-cli meal feedback list --agent
+```
+
+Files a real "Missing Meal" support request with Forkable (dry-run without `--confirm` — preview it first) and appends a local record to `meal-feedback.jsonl` either way. Find the `deliveryId` via `upcoming-digest` or `deliveries list`.
+
 ## Auth Setup
 
 Forkable authenticates with a browser session cookie plus a per-request CSRF token fetched from /api/v2/csrf_token. Log in to forkable.com in Chrome, then run 'forkable-pp-cli auth login --chrome' to import your session. There is no API key.
@@ -234,7 +247,7 @@ Add `--agent` to any command. Expands to: `--json --compact --no-input --no-colo
   forkable-pp-cli buffet-addresses --query example-value --agent --select id,name,status
   ```
 - **Previewable** — `--dry-run` shows the request without sending
-- **Safe writes** — read commands query Forkable; the write commands (`meal set`, `meal set-all`, `meal confirm`, `meal skip`, `reorder`) are dry-run by default and only mutate the account when invoked with `--confirm`
+- **Safe writes** — read commands query Forkable; the write commands (`meal set`, `meal set-all`, `meal confirm`, `meal skip`, `reorder`, `meal feedback`) are dry-run by default and only mutate the account (or, for `meal feedback`, submit a real support request) when invoked with `--confirm`
 - **Live fetch** — commands query Forkable directly over GraphQL; there is no local sync/cache step
 - **Non-interactive** — never prompts, every input is a flag
 
@@ -483,6 +496,8 @@ forkable-pp-cli feedback list --json --limit 10
 Entries are stored locally as `feedback.jsonl` under the resolved data dir. They are never POSTed unless `FORKABLE_FEEDBACK_ENDPOINT` is set AND either `--send` is passed or `FORKABLE_FEEDBACK_AUTO_SEND=true`. Default behavior is local-only.
 
 Write what *surprised* you, not a bug report. Short, specific, one line: that is the part that compounds.
+
+**This is CLI-tool feedback, not meal feedback.** If a delivered meal itself had a problem (missing item, wrong item, quality), use `meal feedback <deliveryId> --note "..." --confirm` instead (see Command Reference) — unlike this command, it actually reaches Forkable support (a real POST to their contact-support endpoint), tied to a `deliveryId`/`piece` so the report is actionable. This `feedback` command stays local-only; `meal feedback` does not.
 
 ## Output Delivery
 

@@ -240,10 +240,14 @@ commands drive the same overrides the web app does:
   meal set-all   Apply one item across several delivery days
   meal confirm   Confirm (or unconfirm) a day's delivery
   meal skip      Skip / cancel one or more delivery days
+  meal feedback  Report a problem with a delivered meal to Forkable support
 
-Every command here places real orders and spend. They are DRY-RUN BY DEFAULT:
-without --confirm they print the mutation and variables they would send and
-stop. Pass --confirm to actually apply the change. Use the read commands
+The first four place real orders and spend via Forkable's GraphQL mutations.
+'meal feedback' is different: it POSTs to a separate REST endpoint (the
+my-account app's own "Contact Support" form), not GraphQL -- see
+'meal feedback --help'. All five are DRY-RUN BY DEFAULT: without --confirm
+they print the exact request they would send and stop. Pass --confirm to
+actually apply the change or submit the request. Use the read commands
 (deliveries, menus, meal-scores, served-history) to find the deliveryId,
 menuId, and itemId these commands need.`, "\n"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -254,6 +258,7 @@ menuId, and itemId these commands need.`, "\n"),
 	cmd.AddCommand(newMealSetAllCmd(flags))
 	cmd.AddCommand(newMealConfirmCmd(flags))
 	cmd.AddCommand(newMealSkipCmd(flags))
+	cmd.AddCommand(newMealFeedbackCmd(flags))
 	return cmd
 }
 

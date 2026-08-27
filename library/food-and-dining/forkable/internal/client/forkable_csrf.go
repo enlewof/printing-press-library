@@ -6,6 +6,11 @@
 // is itself unauthenticated. We fetch it lazily once per Client and cache
 // it for the process lifetime.
 //
+// The my-account SPA's "Contact Support" modal (methods.submitContactForm
+// in mc/js/app.*.js) POSTs the same x-csrf-token header, minted from the
+// same handshake, to a second, non-GraphQL route: /submit_contact_form.
+// needsCSRF covers both routes for that reason.
+//
 // This lives in a separate file (not client.go) so `generate --force` does
 // not clobber it. The single call site inside client.go's request loop is a
 // documented, regen-mergeable one-line hand-edit.
@@ -23,8 +28,13 @@ import (
 // csrfPath is the endpoint that mints a CSRF token for the session.
 const csrfPath = "/api/v2/csrf_token"
 
-// graphqlPath is the single GraphQL route that requires the CSRF header.
+// graphqlPath is the GraphQL route that requires the CSRF header.
 const graphqlPath = "/api/v2/graphql"
+
+// contactFormPath is the my-account SPA's "Contact Support" REST route.
+// Discovered by static analysis of mc/js/app.*.js (methods.submitContactForm);
+// it is not part of the GraphQL surface but requires the same CSRF header.
+const contactFormPath = "/submit_contact_form"
 
 // csrfCache holds a per-Client CSRF token. It caches only a successful
 // fetch: a transient failure leaves the token empty so the next GraphQL
@@ -50,9 +60,10 @@ type csrfTokenResponse struct {
 }
 
 // needsCSRF reports whether a request to the given path should carry the
-// x-csrf-token header. Only the GraphQL route needs it.
+// x-csrf-token header. The GraphQL route and the contact-form route both
+// need it; every other route rides cookie-only auth.
 func needsCSRF(path string) bool {
-	return strings.Contains(path, graphqlPath)
+	return strings.Contains(path, graphqlPath) || strings.Contains(path, contactFormPath)
 }
 
 func (c *Client) csrfCache() *csrfCache {
