@@ -5,11 +5,12 @@
   "base_run_id": "20260810-153232-4e95f81e",
   "base_printing_press_version": "4.30.1",
   "summary": "fix(bonusly): reject recipient mentions with whitespace client-side",
-  "reason": "Mention syntax is space-free. Adding client-side validation prevents false-positive dry-runs and malformed posts.",
+  "reason": "Mention syntax is space-free. Adding client-side validation prevents false-positive dry-runs and malformed posts. Amended post-review (Greptile P1 on PR #1899): recognition_create's --stdin JSON-body path assigned the decoded body straight through, bypassing the same validation the --reason flag path applied -- extracted a shared validateMentionReason() helper and call it from both paths so the check can't be bypassed by input source.",
   "files": [
     "internal/cli/give.go",
     "internal/cli/recognition_create.go"
   ],
-  "validated_outcome": "give and recognition create validate recipients before making requests or dry-running, returning clear actionable suggestions on failure.",
+  "call_sites": ["validateMentionReason"],
+  "validated_outcome": "give's --to flag gets full whitespace-anywhere validation (each --to value must be a single token with no embedded space at all -- structurally correct, since --to is never free text). recognition_create's --reason/--stdin gets a narrower check applied consistently across both input paths: it rejects a mention with a space immediately after '@' (a literally empty mention token), live-verified on both paths post-fix. It deliberately does NOT flag a bare single-word mention followed by a capitalized word (e.g. '@Colin Payne-Rogers') -- that pattern is syntactically indistinguishable from the CLI's own documented valid example ('+50 @jane.doe Great work...'), so a broader heuristic would false-positive on legitimate single-token mentions immediately followed by an ordinary capitalized message word. That failure mode still surfaces as Bonusly's own live 400 'Reason is incomplete' error rather than a pre-empted client-side one for --reason/--stdin; give's --to flag path (F4's original motivating scenario) is unaffected and fully covered.",
   "findings_addressed": ["F4", "F5"]
 }

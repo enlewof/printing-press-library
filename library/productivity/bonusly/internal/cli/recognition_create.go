@@ -12,6 +12,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// validateMentionReason rejects a recognition "reason" string containing a
+// mention with a space immediately after "@" (e.g. "@Jane Doe"). Bonusly's
+// mention syntax is space-free tokens (username or email); a space-bearing
+// mention is silently accepted by the API's reason parser as "no recipient"
+// and fails opaquely later, so this check runs client-side for both the
+// --reason flag and the --stdin JSON body path (see call sites below) rather
+// than once for either alone.
+func validateMentionReason(reason string) error {
+	for i := 0; i < len(reason)-1; i++ {
+		if reason[i] == '@' && (reason[i+1] == ' ' || reason[i+1] == '\t') {
+			return fmt.Errorf("reason contains an invalid mention with a space after @ — use an email or username with no space, e.g. @jane.doe@company.com or @janedoe")
+		}
+	}
+	return nil
+}
+
 func newRecognitionCreateCmd(flags *rootFlags) *cobra.Command {
 	var bodyReason string
 	var bodyParentBonusId string
@@ -62,15 +78,23 @@ func newRecognitionCreateCmd(flags *rootFlags) *cobra.Command {
 				if err := json.Unmarshal(stdinData, &jsonBody); err != nil {
 					return fmt.Errorf("parsing stdin JSON: %w", err)
 				}
+				// Greptile P1 on PR #1899: this branch used to assign the
+				// decoded JSON straight to body, bypassing the mention
+				// validation the --reason flag path applies below --
+				// --stdin is an equally real way to send a malformed
+				// whitespace-bearing mention, so validate it here too.
+				if reasonVal, ok := jsonBody["reason"].(string); ok {
+					if err := validateMentionReason(reasonVal); err != nil {
+						return err
+					}
+				}
 				body = jsonBody
 			} else {
 				bodyMap := map[string]any{}
 				body = bodyMap
 				if cmd.Flags().Changed("reason") || bodyReason != "" {
-					for i := 0; i < len(bodyReason)-1; i++ {
-						if bodyReason[i] == '@' && (bodyReason[i+1] == ' ' || bodyReason[i+1] == '\t') {
-							return fmt.Errorf("reason contains an invalid mention with a space after @ — use an email or username with no space, e.g. @jane.doe@company.com or @janedoe")
-						}
+					if err := validateMentionReason(bodyReason); err != nil {
+						return err
 					}
 					bodyMap["reason"] = bodyReason
 				}
