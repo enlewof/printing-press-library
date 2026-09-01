@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "bonusly-pat-only-auth",
+  "applied_at": "2026-09-01",
+  "base_run_id": "20260810-153232-4e95f81e",
+  "base_printing_press_version": "4.30.1",
+  "summary": "refactor(bonusly): remove browser-cookie session authentication in favor of Personal Access Tokens (PAT)",
+  "reason": "Bonusly's official API docs (help.bonus.ly 'Bonusly API access for admins') confirm Personal Access Tokens are the sole authentication mechanism for the REST API -- there is no cookie/session security scheme in Bonusly's documented OpenAPI spec at all. Live-reproduced this session: a browser-cookie session (auth login --chrome) authenticates GET requests successfully but every POST (give, recognition create) fails with 403 'CSRF token is missing or invalid'; switching to a PAT via auth set-token fixed writes immediately with no other change. This patch SUPERSEDES AND FULLY RETRACTS the prior bonusly-cookie-session-auth.json patch (applied 2026-08-17), which added this exact Chrome-cookie-extraction subsystem on the premise that 'not every account can self-serve a token' -- that premise doesn't hold given the API's documented PAT-only auth model, and the shipped cookie path was silently broken for every mutating call. Deleted the cookie-session-auth patch file as part of this change since the customization it described (CookieVal field, bonusly_cookiejar.go, Chrome profile discovery, pycookiecheat shell-outs) no longer exists in this source.",
+  "files": [
+    "internal/cli/auth.go",
+    "internal/client/client.go",
+    "internal/cliutil/credentials.go",
+    "internal/config/config.go"
+  ],
+  "call_sites": ["auth set-token", "BONUSLY_API_TOKEN"],
+  "supersedes": ["bonusly-cookie-session-auth"],
+  "validated_outcome": "Removed ~850 lines of dead browser-cookie extraction code (Chrome profile discovery across release channels, pycookiecheat shell-outs, cookies-file import, cookie-jar seeding). go build/go vet clean. Live-tested: auth login --chrome now prints PAT onboarding instructions without touching Chrome/sqlite3/pycookiecheat; auth status still correctly reports credential presence via the bearer-token path only; give/recognition create writes succeed end-to-end using a PAT via auth set-token. Updated README.md and SKILL.md's Auth Setup sections to describe only the PAT flow.",
+  "findings_addressed": ["F6", "F7"]
+}

@@ -67,6 +67,11 @@ func newRecognitionCreateCmd(flags *rootFlags) *cobra.Command {
 				bodyMap := map[string]any{}
 				body = bodyMap
 				if cmd.Flags().Changed("reason") || bodyReason != "" {
+					for i := 0; i < len(bodyReason)-1; i++ {
+						if bodyReason[i] == '@' && (bodyReason[i+1] == ' ' || bodyReason[i+1] == '\t') {
+							return fmt.Errorf("reason contains an invalid mention with a space after @ — use an email or username with no space, e.g. @jane.doe@company.com or @janedoe")
+						}
+					}
 					bodyMap["reason"] = bodyReason
 				}
 				if cmd.Flags().Changed("parent-bonus-id") || bodyParentBonusId != "" {

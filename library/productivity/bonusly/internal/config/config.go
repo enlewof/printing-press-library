@@ -39,12 +39,6 @@ type Config struct {
 	envOverrides     map[string]bool `toml:"-"`
 	fileConfig       *Config         `toml:"-"`
 	BonuslyApiToken  string          `toml:"api_token"`
-	// pp:hand-edit bonusly-cookiejar — raw browser-session cookie credential
-	// ("name=value; name=value") captured by `auth login --chrome` /
-	// --cookies-file. Bonusly's confirmed API is bearer-token auth; this is
-	// an escape hatch for accounts that cannot self-serve a Settings ->
-	// API Keys token. See internal/client/bonusly_cookiejar.go.
-	CookieVal string `toml:"cookie"`
 }
 
 func Load(configPath string) (*Config, error) {
@@ -191,16 +185,6 @@ func Load(configPath string) (*Config, error) {
 	if v := os.Getenv("BONUSLY_BASE_URL"); v != "" {
 		cfg.BaseURL = v
 	}
-	// pp:hand-edit bonusly-cookiejar — env override for the browser-session
-	// cookie credential, mirroring BONUSLY_API_TOKEN's override precedence.
-	if v := os.Getenv("BONUSLY_COOKIE"); v != "" {
-		cfg.CookieVal = v
-		cfg.markEnvOverride("CookieVal")
-		if cfg.AuthSource == "" {
-			cfg.AuthSource = "env:BONUSLY_COOKIE"
-			cfg.CredentialSource = "env:BONUSLY_COOKIE"
-		}
-	}
 	return cfg, nil
 }
 
@@ -280,21 +264,7 @@ func (c *Config) CredentialConfigured() bool {
 	if c == nil {
 		return false
 	}
-	return c.AuthHeader() != "" || c.CookieCredential() != ""
-}
-
-// CookieCredential returns the raw stored cookie-jar credential
-// ("name=value; name=value") captured by `auth login --chrome` /
-// --cookies-file, used to seed an http.CookieJar so the browser session
-// rides every request. Deliberately NOT folded into AuthHeader(): Bonusly's
-// documented API is bearer-token auth, and wrapping a cookie string in a
-// bogus "Authorization: Bearer <cookie>" header (as opposed to sending it
-// only via the Cookie header/jar) risks the server rejecting a
-// malformed Authorization header outright. Returns "" when no cookie
-// credential is set.
-// pp:hand-edit bonusly-cookiejar
-func (c *Config) CookieCredential() string {
-	return c.CookieVal
+	return c.AuthHeader() != ""
 }
 
 func applyAuthFormat(format string, replacements map[string]string) string {
@@ -340,9 +310,6 @@ func (c *Config) hasCredentialFields() bool {
 	if c.BonuslyApiToken != "" {
 		return true
 	}
-	if c.CookieVal != "" { // pp:hand-edit bonusly-cookiejar
-		return true
-	}
 	return false
 }
 
@@ -373,7 +340,6 @@ func (c *Config) clearCredentialFields() {
 	c.ClientID = ""
 	c.ClientSecret = ""
 	c.BonuslyApiToken = ""
-	c.CookieVal = "" // pp:hand-edit bonusly-cookiejar
 }
 
 func (c *Config) credentials() *cliutil.Credentials {
@@ -385,7 +351,6 @@ func (c *Config) credentials() *cliutil.Credentials {
 		ClientID:        c.ClientID,
 		ClientSecret:    c.ClientSecret,
 		BonuslyApiToken: c.BonuslyApiToken,
-		CookieVal:       c.CookieVal, // pp:hand-edit bonusly-cookiejar
 	}
 }
 
@@ -413,9 +378,6 @@ func (c *Config) applyCredentials(creds *cliutil.Credentials) {
 	}
 	if c.BonuslyApiToken == "" {
 		c.BonuslyApiToken = creds.BonuslyApiToken
-	}
-	if c.CookieVal == "" { // pp:hand-edit bonusly-cookiejar
-		c.CookieVal = creds.CookieVal
 	}
 }
 
@@ -454,22 +416,6 @@ func (c *Config) SaveTokens(clientID, clientSecret, accessToken, refreshToken st
 	return c.save()
 }
 
-// SaveCookie persists a browser-session cookie credential (a raw
-// "name=value; name=value" Cookie-header string captured by
-// `auth login --chrome` / --cookies-file) so it seeds the HTTP client's
-// cookie jar on future runs. Independent of SaveTokens: a cookie credential
-// and a bearer token can coexist (AuthHeader() only reads the latter).
-// pp:hand-edit bonusly-cookiejar
-func (c *Config) SaveCookie(cookie string) error {
-	c.CookieVal = cookie
-	delete(c.envOverrides, "CookieVal")
-	c.updateFileConfigField("CookieVal")
-	if err := c.saveCredentialsFirst(); err != nil {
-		return err
-	}
-	return c.save()
-}
-
 func (c *Config) ClearTokens() error {
 	// AuthHeader() falls back to the env-var-derived fields when AuthHeaderVal
 	// and AccessToken are empty, so dropping the working credential requires
@@ -498,12 +444,6 @@ func (c *Config) ClearTokens() error {
 	c.BonuslyApiToken = ""
 	delete(c.envOverrides, "BonuslyApiToken")
 	c.updateFileConfigField("BonuslyApiToken")
-	// pp:hand-edit bonusly-cookiejar — logout must also drop any stored
-	// browser-session cookie, or a subsequent run would silently re-auth
-	// via the jar after the user asked to log out.
-	c.CookieVal = ""
-	delete(c.envOverrides, "CookieVal")
-	c.updateFileConfigField("CookieVal")
 	if c.AgentcookieManagedByExternalStore() {
 		c.markAgentcookieManaged()
 		// save() persists the full config (credential fields included) for
@@ -580,8 +520,6 @@ func (c *Config) updateFileConfigField(field string) {
 		c.fileConfig.ClientSecret = c.ClientSecret
 	case "BonuslyApiToken":
 		c.fileConfig.BonuslyApiToken = c.BonuslyApiToken
-	case "CookieVal": // pp:hand-edit bonusly-cookiejar
-		c.fileConfig.CookieVal = c.CookieVal
 	}
 }
 

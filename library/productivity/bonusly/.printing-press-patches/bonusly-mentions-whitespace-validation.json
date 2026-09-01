@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "id": "bonusly-mentions-whitespace-validation",
+  "applied_at": "2026-09-01",
+  "base_run_id": "20260810-153232-4e95f81e",
+  "base_printing_press_version": "4.30.1",
+  "summary": "fix(bonusly): reject recipient mentions with whitespace client-side",
+  "reason": "Mention syntax is space-free. Adding client-side validation prevents false-positive dry-runs and malformed posts.",
+  "files": [
+    "internal/cli/give.go",
+    "internal/cli/recognition_create.go"
+  ],
+  "validated_outcome": "give and recognition create validate recipients before making requests or dry-running, returning clear actionable suggestions on failure.",
+  "findings_addressed": ["F4", "F5"]
+}

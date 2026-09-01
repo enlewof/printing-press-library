@@ -7,13 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 	var flagSearch string
-	var flagCursor string
+	var flagLimit int
+	var flagSkip int
 
 	cmd := &cobra.Command{
 		Use:         "top",
@@ -32,16 +34,55 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 				return err
 			}
 			params := map[string]string{"top_level": "true"}
-			if flagSearch != "" {
-				params["search"] = formatCLIParamValue(flagSearch)
+			if flagLimit > 0 {
+				params["limit"] = fmt.Sprintf("%d", flagLimit)
 			}
-			if flagCursor != "" {
-				params["cursor"] = formatCLIParamValue(flagCursor)
+			if flagSkip > 0 {
+				params["skip"] = fmt.Sprintf("%d", flagSkip)
 			}
 			data, prov, err := resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "org", false, path, params, nil, "", cmd.ErrOrStderr())
 			if err != nil {
 				return classifyAPIError(err, flags)
 			}
+
+			if flagSearch != "" {
+				// No server-side search param exists on this endpoint, so filter client-side.
+				var envelope map[string]any
+				if err := json.Unmarshal(data, &envelope); err != nil {
+					return fmt.Errorf("failed to parse response envelope: %w", err)
+				}
+				resultsArray, ok := envelope["result"].([]any)
+				if !ok {
+					resultsArray = []any{}
+				}
+				var filteredUsers []any
+				searchLower := strings.ToLower(flagSearch)
+				for _, rawUser := range resultsArray {
+					user, ok := rawUser.(map[string]any)
+					if !ok {
+						continue
+					}
+					match := false
+					for _, fieldKey := range []string{"display_name", "email", "username", "first_name", "last_name"} {
+						if val, ok := user[fieldKey].(string); ok {
+							if strings.Contains(strings.ToLower(val), searchLower) {
+								match = true
+								break
+							}
+						}
+					}
+					if match {
+						filteredUsers = append(filteredUsers, user)
+					}
+				}
+				envelope["result"] = filteredUsers
+				filteredData, err := json.Marshal(envelope)
+				if err != nil {
+					return fmt.Errorf("failed to marshal filtered users: %w", err)
+				}
+				data = filteredData
+			}
+
 			outputData := data
 			// Print provenance to stderr for human-facing output only.
 			// Machine-format flags (--json, --csv, --compact, --quiet, --plain,
@@ -95,8 +136,9 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 			return printOutputWithFlagsMeta(cmd.OutOrStdout(), formatData, flags, map[string]any{"source": "live"})
 		},
 	}
-	cmd.Flags().StringVar(&flagSearch, "search", "", "")
-	cmd.Flags().StringVar(&flagCursor, "cursor", "", "")
+	cmd.Flags().StringVar(&flagSearch, "search", "", "Client-side substring filter against display_name, email, username, first_name, last_name")
+	cmd.Flags().IntVar(&flagLimit, "limit", 100, "Maximum number of users to return (max 100)")
+	cmd.Flags().IntVar(&flagSkip, "skip", 0, "Number of users to skip")
 
 	return cmd
 }

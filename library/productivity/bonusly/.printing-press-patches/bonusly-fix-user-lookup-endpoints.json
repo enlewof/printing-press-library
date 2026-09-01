@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "bonusly-fix-user-lookup-endpoints",
+  "applied_at": "2026-09-01",
+  "base_run_id": "20260810-153232-4e95f81e",
+  "base_printing_press_version": "4.30.1",
+  "summary": "fix(bonusly): users search/get hit nonexistent endpoints, always 404",
+  "reason": "spec.yaml marked /users/show and /users/search paths as '# inferred' -- both are wrong. Real API is /users/{id} (path param, ObjectId only) and /users/autocomplete?search=.",
+  "files": [
+    "internal/cli/users_search.go",
+    "internal/cli/users_get.go"
+  ],
+  "call_sites": [
+    "/users/autocomplete",
+    "/users/{id}"
+  ],
+  "validated_outcome": "Tested with go build and live API search/get requests, successfully fetching users via autocomplete and path parameter IDs.",
+  "findings_addressed": ["F1", "F2"]
+}

@@ -31,7 +31,6 @@ type Credentials struct {
 	ClientID        string    `toml:"client_id"`
 	ClientSecret    string    `toml:"client_secret"`
 	BonuslyApiToken string    `toml:"api_token"`
-	CookieVal       string    `toml:"cookie"` // pp:hand-edit bonusly-cookiejar
 }
 
 func credentialsFileFrom(creds *Credentials) map[string]interface{} {
@@ -189,8 +188,7 @@ func (c *Credentials) HasValues() bool {
 		c.RefreshToken != "" ||
 		c.ClientID != "" ||
 		c.ClientSecret != "" ||
-		c.BonuslyApiToken != "" ||
-		c.CookieVal != "" // pp:hand-edit bonusly-cookiejar
+		c.BonuslyApiToken != ""
 }
 
 func warnCredentialsIssue(path, action string, err error) {

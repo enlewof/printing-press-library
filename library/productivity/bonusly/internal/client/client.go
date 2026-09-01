@@ -286,11 +286,6 @@ func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 		}
 		return nil
 	}
-	// pp:hand-edit bonusly-cookiejar — seed the cookie jar from the stored
-	// browser-session credential (if any) so requests carry it via Go's
-	// native http.Client cookie handling. See
-	// internal/client/bonusly_cookiejar.go.
-	c.seedCookieJar()
 	return c
 }
 

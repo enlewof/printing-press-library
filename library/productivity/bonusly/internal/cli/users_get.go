@@ -35,16 +35,54 @@ func newUsersGetCmd(flags *rootFlags) *cobra.Command {
 				}
 				return usageErr(fmt.Errorf("missing required argument\nUsage: %s%s", cmd.CommandPath(), " <identifier>"))
 			}
-			path := "/users/show"
 			c, err := flags.newClient()
 			if err != nil {
 				return err
 			}
-			params := map[string]string{}
-			params["identifier"] = args[0]
-			data, prov, err := resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "users", false, path, params, nil, "", cmd.ErrOrStderr())
-			if err != nil {
-				return classifyAPIError(err, flags)
+			var data json.RawMessage
+			var prov DataProvenance
+			var fetchErr error
+
+			if isBSONObjectID(args[0]) {
+				path := "/users/" + args[0]
+				data, prov, fetchErr = resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "users", false, path, nil, nil, "", cmd.ErrOrStderr())
+			} else {
+				searchPath := "/users/autocomplete"
+				queryParams := map[string]string{
+					"search": args[0],
+					"limit":  "5",
+				}
+				searchData, _, err := resolvePaginatedReadWithStrategy(cmd.Context(), c, flags, "auto", "users", searchPath, queryParams, nil, false, "", "cursor", "", 5, "cursor", "meta.has_more", "", cmd.ErrOrStderr())
+				if err != nil {
+					return classifyAPIError(err, flags)
+				}
+				searchOutput := collectionItemsForOutput(searchData, searchPath)
+				var results []map[string]any
+				if err := json.Unmarshal(searchOutput, &results); err != nil {
+					return fmt.Errorf("failed to parse autocomplete results: %w", err)
+				}
+				if len(results) == 0 {
+					return fmt.Errorf("no user matched %q", args[0])
+				}
+				if len(results) > 1 {
+					var candidateList string
+					for _, cand := range results {
+						displayName := cand["display_name"]
+						email := cand["email"]
+						id := cand["id"]
+						candidateList += fmt.Sprintf("- %v (%v, ID: %v)\n", displayName, email, id)
+					}
+					return fmt.Errorf("ambiguous: multiple users matched %q. Please select one:\n%s", args[0], candidateList)
+				}
+				idVal, ok := results[0]["id"].(string)
+				if !ok || idVal == "" {
+					return fmt.Errorf("invalid user id in autocomplete result")
+				}
+				path := "/users/" + idVal
+				data, prov, fetchErr = resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "users", false, path, nil, nil, "", cmd.ErrOrStderr())
+			}
+			if fetchErr != nil {
+				return classifyAPIError(fetchErr, flags)
 			}
 			outputData := data
 			// Print provenance to stderr for human-facing output only.
@@ -101,4 +139,17 @@ func newUsersGetCmd(flags *rootFlags) *cobra.Command {
 	}
 
 	return cmd
+}
+
+func isBSONObjectID(s string) bool {
+	if len(s) != 24 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

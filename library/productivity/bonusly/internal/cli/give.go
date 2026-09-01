@@ -58,6 +58,9 @@ func newGiveCmd(flags *rootFlags) *cobra.Command {
 				if t == "" {
 					continue
 				}
+				if strings.ContainsAny(t, " \t\r\n") {
+					return fmt.Errorf("recipient %q contains a space — use an email or username instead, e.g. jane.doe@example.com or jane.doe", t)
+				}
 				if !strings.HasPrefix(t, "@") {
 					t = "@" + t
 				}

@@ -13,28 +13,41 @@ import (
 
 func newUsersSearchCmd(flags *rootFlags) *cobra.Command {
 	var flagQuery string
-	var flagDepartment string
-	var flagLocation string
-	var flagCursor string
+	var flagSearch string
+	var flagIncludeNonReceivable bool
+	var flagLimit int
 	var flagAll bool
 
 	cmd := &cobra.Command{
 		Use:         "search",
-		Short:       "Search users by name or email, with optional department/location filters",
-		Example:     "  bonusly-pp-cli users search",
-		Annotations: map[string]string{"pp:endpoint": "users.search", "pp:method": "GET", "pp:path": "/users/search", "mcp:read-only": "true"},
+		Short:       "Search users by name or email via autocomplete",
+		Example:     "  bonusly-pp-cli users search --search \"Jane\"",
+		Annotations: map[string]string{"pp:endpoint": "users.search", "pp:method": "GET", "pp:path": "/users/autocomplete", "mcp:read-only": "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := "/users/search"
+			path := "/users/autocomplete"
 			c, err := flags.newClient()
 			if err != nil {
 				return err
 			}
-			data, prov, err := resolvePaginatedReadWithStrategy(cmd.Context(), c, flags, "auto", "users", path, map[string]string{
-				"query":      formatCLIParamValue(flagQuery),
-				"department": formatCLIParamValue(flagDepartment),
-				"location":   formatCLIParamValue(flagLocation),
-				"cursor":     formatCLIParamValue(flagCursor),
-			}, nil, flagAll, "", "cursor", "", 100, "cursor", "meta.has_more", "", cmd.ErrOrStderr())
+			searchTerm := flagSearch
+			if searchTerm == "" {
+				searchTerm = flagQuery
+			}
+			if searchTerm == "" {
+				return fmt.Errorf("search term (via --search or --query) is required")
+			}
+
+			queryParams := map[string]string{
+				"search": searchTerm,
+			}
+			if flagIncludeNonReceivable {
+				queryParams["include_non_receivable"] = "true"
+			}
+			if flagLimit > 0 {
+				queryParams["limit"] = fmt.Sprintf("%d", flagLimit)
+			}
+
+			data, prov, err := resolvePaginatedReadWithStrategy(cmd.Context(), c, flags, "auto", "users", path, queryParams, nil, flagAll, "", "cursor", "", 20, "cursor", "meta.has_more", "", cmd.ErrOrStderr())
 			if err != nil {
 				return classifyAPIError(err, flags)
 			}
@@ -91,10 +104,10 @@ func newUsersSearchCmd(flags *rootFlags) *cobra.Command {
 			return printOutputWithFlagsMeta(cmd.OutOrStdout(), formatData, flags, map[string]any{"source": "live"})
 		},
 	}
-	cmd.Flags().StringVar(&flagQuery, "query", "", "Name or email search term")
-	cmd.Flags().StringVar(&flagDepartment, "department", "", "Filter by department name (exact match)")
-	cmd.Flags().StringVar(&flagLocation, "location", "", "Filter by location name (exact match)")
-	cmd.Flags().StringVar(&flagCursor, "cursor", "", "Pagination cursor")
+	cmd.Flags().StringVar(&flagQuery, "query", "", "Name or email search term (backward compatibility)")
+	cmd.Flags().StringVar(&flagSearch, "search", "", "Name or email search term")
+	cmd.Flags().BoolVar(&flagIncludeNonReceivable, "include-non-receivable", false, "Include non-receivable users in results")
+	cmd.Flags().IntVar(&flagLimit, "limit", 20, "Maximum number of users to return")
 	cmd.Flags().BoolVar(&flagAll, "all", false, "Fetch all pages")
 
 	return cmd

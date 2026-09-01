@@ -206,7 +206,22 @@ Diffs locally-snapshotted balance history to project burn rate against the month
 
 ## Auth Setup
 
-Bonusly authenticates with a Personal Access Token (PAT), not OAuth. Any employee can mint one from their own Settings -> Services page (not the admin-only Company -> Integrations -> API & Tokens page) -- pick only the scopes this CLI needs (user:read, recognition:read, recognition:write, rewards:read; admin scopes won't even be offered to a non-admin account). Tokens expire after up to 365 days with email reminders 30 and 7 days out. If self-serve token generation isn't available on your account, `bonusly-pp-cli auth login --chrome` authenticates from a captured browser session instead.
+Bonusly authenticates with a Personal Access Token (PAT).
+
+To set up:
+1. Mint a Personal Access Token from your Settings -> Services page (regular users) or Company -> Integrations -> API & Tokens page (admins) at bonus.ly.
+2. Select the scopes this CLI needs (user:read, recognition:read, recognition:write, rewards:read).
+3. Save it to your config:
+   ```bash
+   bonusly-pp-cli auth set-token <your-token-here>
+   ```
+
+Alternatively, configure the token via the environment:
+```bash
+export BONUSLY_API_TOKEN="your-token-here"
+```
+
+Tokens expire after up to 365 days with email reminders 30 and 7 days out.
 
 Run `bonusly-pp-cli doctor` to verify setup.
 

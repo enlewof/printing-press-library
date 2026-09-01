@@ -120,7 +120,22 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 ## Authentication
 
-Bonusly authenticates with a Personal Access Token (PAT), not OAuth. Any employee can mint one from their own Settings -> Services page (not the admin-only Company -> Integrations -> API & Tokens page) -- pick only the scopes this CLI needs (user:read, recognition:read, recognition:write, rewards:read; admin scopes won't even be offered to a non-admin account). Tokens expire after up to 365 days with email reminders 30 and 7 days out. If self-serve token generation isn't available on your account, `bonusly-pp-cli auth login --chrome` authenticates from a captured browser session instead.
+Bonusly authenticates with a Personal Access Token (PAT).
+
+To set up:
+1. Mint a Personal Access Token from your Settings -> Services page (regular users) or Company -> Integrations -> API & Tokens page (admins) at bonus.ly.
+2. Select the scopes this CLI needs (user:read, recognition:read, recognition:write, rewards:read).
+3. Save it to your config:
+   ```bash
+   bonusly-pp-cli auth set-token <your-token-here>
+   ```
+
+Alternatively, configure the token via the environment:
+```bash
+export BONUSLY_API_TOKEN="your-token-here"
+```
+
+Tokens expire after up to 365 days with email reminders 30 and 7 days out.
 
 ## Quick Start
 
@@ -435,7 +450,7 @@ If you use agentcookie to sync secrets across machines, this CLI auto-adopts age
 
 ## Known Gaps
 
-This CLI was originally generated without access to a live Bonusly API credential, so its first cut of endpoint paths was inferred from documentation and pattern-matching rather than confirmed. It has since been live-tested end-to-end against a real authenticated session (`auth login --chrome`), and several of those original inferences turned out wrong in ways the no-auth probing heuristic (401 vs. 404 with no token) could not have caught, because Bonusly returns 401 on some genuinely nonexistent paths too. This section reflects what live testing actually found.
+This CLI was originally generated without access to a live Bonusly API credential, so its first cut of endpoint paths was inferred from documentation and pattern-matching rather than confirmed. It has since been live-tested end-to-end against a real authenticated session, and several of those original inferences turned out wrong in ways the no-auth probing heuristic (401 vs. 404 with no token) could not have caught, because Bonusly returns 401 on some genuinely nonexistent paths too. This section reflects what live testing actually found.
 
 1. **Removed: `awards`, `groups`, `incentives`, `meetings`.** None of these command groups could be made to work. Live probing (~20 path variants each, using a real authenticated session) found no working endpoint for the awards catalog, custom/system user groups, or 1:1 meetings resources — every variant tried returned 404. Rather than ship commands that always fail, they were removed. If you find the real endpoints (e.g. by capturing your own browser's network traffic while using these Bonusly features), please open an issue or PR.
 2. **Fixed: `balance`, `balance history`, `recognition audit`.** The originally-inferred `/users/points_balance` does not exist; the real data (`giving_balance`, `earning_balance`, `lifetime_earnings`) lives directly on `GET /users/me`. Bonusly does not appear to expose `monthly_budget`, `currency`, `exchange_rate`, `lifetime_given`, or `lifetime_redeemed` to a non-admin account via any endpoint found so far — those fields report as zero rather than a guessed value.
