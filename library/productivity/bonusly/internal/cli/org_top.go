@@ -33,31 +33,46 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			params := map[string]string{"top_level": "true"}
-			if flagLimit > 0 {
-				params["limit"] = fmt.Sprintf("%d", flagLimit)
-			}
-			if flagSkip > 0 {
-				params["skip"] = fmt.Sprintf("%d", flagSkip)
-			}
-			data, prov, err := resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "org", false, path, params, nil, "", cmd.ErrOrStderr())
-			if err != nil {
-				return classifyAPIError(err, flags)
-			}
+			var data []byte
+			var prov DataProvenance
 
 			if flagSearch != "" {
-				// No server-side search param exists on this endpoint, so filter client-side.
-				var envelope map[string]any
-				if err := json.Unmarshal(data, &envelope); err != nil {
-					return fmt.Errorf("failed to parse response envelope: %w", err)
+				// No server-side search param exists on this endpoint. A match
+				// can live on any page, so --search must walk the FULL
+				// top-level population rather than filtering whatever single
+				// page the caller's --limit/--skip happened to select
+				// (Greptile P1 on PR #1899: filtering only one page silently
+				// misses or under-reports matches outside it). --limit/--skip
+				// are ignored in this branch by design.
+				const pageSize = 100   // API max per docs.bonus.ly/reference/list_users
+				const maxPages = 50    // safety cap: 5000 users: generous ceiling for a company directory
+				var allUsers []any
+				var lastProv DataProvenance
+				for page := 0; page < maxPages; page++ {
+					pageParams := map[string]string{
+						"top_level": "true",
+						"limit":     fmt.Sprintf("%d", pageSize),
+						"skip":      fmt.Sprintf("%d", page*pageSize),
+					}
+					pageData, pageProv, err := resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "org", false, path, pageParams, nil, "", cmd.ErrOrStderr())
+					if err != nil {
+						return classifyAPIError(err, flags)
+					}
+					lastProv = pageProv
+					var envelope map[string]any
+					if err := json.Unmarshal(pageData, &envelope); err != nil {
+						return fmt.Errorf("failed to parse response envelope: %w", err)
+					}
+					resultsArray, _ := envelope["result"].([]any)
+					allUsers = append(allUsers, resultsArray...)
+					if len(resultsArray) < pageSize {
+						break // last page
+					}
 				}
-				resultsArray, ok := envelope["result"].([]any)
-				if !ok {
-					resultsArray = []any{}
-				}
+
 				var filteredUsers []any
 				searchLower := strings.ToLower(flagSearch)
-				for _, rawUser := range resultsArray {
+				for _, rawUser := range allUsers {
 					user, ok := rawUser.(map[string]any)
 					if !ok {
 						continue
@@ -75,12 +90,25 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 						filteredUsers = append(filteredUsers, user)
 					}
 				}
-				envelope["result"] = filteredUsers
-				filteredData, err := json.Marshal(envelope)
+				filteredData, err := json.Marshal(map[string]any{"success": true, "result": filteredUsers})
 				if err != nil {
 					return fmt.Errorf("failed to marshal filtered users: %w", err)
 				}
 				data = filteredData
+				prov = lastProv
+			} else {
+				params := map[string]string{"top_level": "true"}
+				if flagLimit > 0 {
+					params["limit"] = fmt.Sprintf("%d", flagLimit)
+				}
+				if flagSkip > 0 {
+					params["skip"] = fmt.Sprintf("%d", flagSkip)
+				}
+				var err error
+				data, prov, err = resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "org", false, path, params, nil, "", cmd.ErrOrStderr())
+				if err != nil {
+					return classifyAPIError(err, flags)
+				}
 			}
 
 			outputData := data

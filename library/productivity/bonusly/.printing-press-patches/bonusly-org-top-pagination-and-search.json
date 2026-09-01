@@ -5,10 +5,10 @@
   "base_run_id": "20260810-153232-4e95f81e",
   "base_printing_press_version": "4.30.1",
   "summary": "fix(bonusly): replace cursor with real pagination and client-side filter for org top",
-  "reason": "GET /users?top_level=true has no server-side free text search. Pagination is offset-based via skip/limit, not cursor-based.",
+  "reason": "GET /users?top_level=true has no server-side free text search. Pagination is offset-based via skip/limit, not cursor-based. Amended post-review (Greptile P1 on PR #1899): the initial client-side filter only scanned the single page selected by --limit/--skip, so a match outside that page was silently missed or under-reported. --search now walks the full top-level population (looping limit=100 pages via skip until a short page ends the walk, capped at 50 pages) before filtering; --limit/--skip are honored as before for the no-search path, which is unaffected.",
   "files": [
     "internal/cli/org_top.go"
   ],
-  "validated_outcome": "org top successfully supports skip/limit parameters and filters results client-side when search is specified.",
+  "validated_outcome": "org top successfully supports skip/limit parameters for the plain listing, and --search now scans the entire top-level population rather than one page -- live-verified by finding a match that sat at the tail end of what was previously the only page fetched (would have been missed by the original single-page filter).",
   "findings_addressed": ["F3"]
 }
