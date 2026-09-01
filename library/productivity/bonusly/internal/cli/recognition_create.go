@@ -39,26 +39,29 @@ import (
 // never becomes the reason a legitimate recognition fails to send. The real
 // POST /bonuses remains the final source of truth either way.
 func validateMentionReasonLive(ctx context.Context, c *client.Client, flags *rootFlags, reason string, hintWriter io.Writer) error {
-	for i := 0; i < len(reason)-1; i++ {
-		if reason[i] == '@' && (reason[i+1] == ' ' || reason[i+1] == '\t') {
-			return fmt.Errorf("reason contains an invalid mention with a space after @ — use an email or username with no space, e.g. @jane.doe@company.com or @janedoe")
-		}
-	}
+	// strings.Fields splits on every Unicode whitespace character (space,
+	// tab, newline, CR, form feed, vertical tab, and beyond), so an empty
+	// mention is caught here for ANY whitespace type, not just the two an
+	// earlier version of this check hand-scanned for (a byte-by-byte ' '/
+	// '\t' pre-scan missed the rest and, worse, its own bare-"@" token
+	// still made it into this loop, which used to silently `continue` past
+	// it -- Greptile P1 on PR #1899. There is no separate pre-scan now;
+	// the empty-token case below is the single place that catches it.
 	for _, word := range strings.Fields(reason) {
 		if !strings.HasPrefix(word, "@") {
 			continue
 		}
 		token := word[1:]
 		if token == "" {
-			continue // caught by the empty-mention check above
+			return fmt.Errorf("reason contains an invalid mention with no text after @ — use an email or username with no space, e.g. @jane.doe@company.com or @janedoe")
 		}
 		result, err := resolveMentionCandidate(ctx, c, flags, token, hintWriter)
 		if err != nil || result.Skipped {
-			reason := result.SkipReason
+			skipMsg := result.SkipReason
 			if err != nil {
-				reason = err.Error()
+				skipMsg = err.Error()
 			}
-			fmt.Fprintf(hintWriter, "warning: could not verify mention %q ahead of time (%s); the real submission will be the final check\n", word, reason)
+			fmt.Fprintf(hintWriter, "warning: could not verify mention %q ahead of time (%s); the real submission will be the final check\n", word, skipMsg)
 			continue
 		}
 		if !result.Matched {

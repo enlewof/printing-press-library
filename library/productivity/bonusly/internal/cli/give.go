@@ -100,11 +100,11 @@ func newGiveCmd(flags *rootFlags) *cobra.Command {
 			for _, token := range bareTokens {
 				result, lookupErr := resolveMentionCandidate(ctx, c, flags, token, cmd.ErrOrStderr())
 				if lookupErr != nil || result.Skipped {
-					reason := result.SkipReason
+					skipMsg := result.SkipReason
 					if lookupErr != nil {
-						reason = lookupErr.Error()
+						skipMsg = lookupErr.Error()
 					}
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not verify recipient %q ahead of time (%s); the real submission will be the final check\n", token, reason)
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not verify recipient %q ahead of time (%s); the real submission will be the final check\n", token, skipMsg)
 					continue
 				}
 				if !result.Matched {
