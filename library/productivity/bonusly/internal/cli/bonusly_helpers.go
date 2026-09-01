@@ -99,22 +99,38 @@ type mentionLookupResult struct {
 // mentions. Uses the same GET /users/autocomplete endpoint users_search.go
 // fixed (PR #1899, F1) rather than a fragile capitalization heuristic.
 //
-// Under normal (non-dry-run) operation this always reaches the live API:
-// --dry-run is the only thing that intercepts it (see mentionLookupResult
-// doc above) -- there is no local-store fallback for this check, by
-// design, since a stale local mirror could wrongly confirm a mention that
-// no longer resolves.
+// Deliberately bypasses --dry-run for the DURATION OF THIS CALL ONLY: the
+// shared client's DryRun flag intercepts every request including reads
+// (client.Client.dryRun), which would make a dry-run preview unable to
+// warn about an unresolvable mention at all -- exactly the "dry-run result
+// for a submission Bonusly would reject" gap flagged in review. This
+// lookup is read-only and has no side effects, so honoring the user's
+// "don't send the mutating request" intent does not require also skipping
+// this safety check. c.DryRun is restored immediately after the call
+// (single-threaded command invocation, no concurrent use of c during a
+// command's RunE) so the real mutating POST later in the same command is
+// still correctly intercepted if --dry-run was requested.
+//
+// There is no local-store fallback for this check, by design, since a
+// stale local mirror could wrongly confirm a mention that no longer
+// resolves.
 //
 // Returns Matched=true when any candidate's username, full email, or the
 // email's local part (the part before "@") equals token case-insensitively.
 func resolveMentionCandidate(ctx context.Context, c *client.Client, flags *rootFlags, token string, hintWriter io.Writer) (mentionLookupResult, error) {
+	wasDryRun := c.DryRun
+	c.DryRun = false
 	params := map[string]string{"search": token, "limit": "5"}
 	data, prov, err := resolveReadWithStrategyAndResponsePath(ctx, c, flags, "live", "users", false, "/users/autocomplete", params, nil, "", hintWriter)
+	c.DryRun = wasDryRun
 	if err != nil {
 		return mentionLookupResult{Skipped: true, SkipReason: err.Error()}, nil
 	}
 	if prov.Source == "dry-run" {
-		return mentionLookupResult{Skipped: true, SkipReason: "running under --dry-run"}, nil
+		// Defensive fallback only -- should be unreachable now that DryRun
+		// is forced off above, but treat it as "unverified" rather than
+		// panic if some other path still short-circuits this call.
+		return mentionLookupResult{Skipped: true, SkipReason: "dry-run short-circuit (unexpected)"}, nil
 	}
 	// collectionItemsForOutput does not unwrap this envelope shape for this
 	// path (it's tuned for cursor-paginated list envelopes, not Bonusly's

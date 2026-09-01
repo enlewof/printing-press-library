@@ -44,10 +44,11 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 				// (Greptile P1 on PR #1899: filtering only one page silently
 				// misses or under-reports matches outside it). --limit/--skip
 				// are ignored in this branch by design.
-				const pageSize = 100   // API max per docs.bonus.ly/reference/list_users
-				const maxPages = 50    // safety cap: 5000 users: generous ceiling for a company directory
+				const pageSize = 100 // API max per docs.bonus.ly/reference/list_users
+				const maxPages = 50  // safety cap: 5000 users -- generous ceiling for a company directory
 				var allUsers []any
 				var lastProv DataProvenance
+				truncated := false
 				for page := 0; page < maxPages; page++ {
 					pageParams := map[string]string{
 						"top_level": "true",
@@ -67,6 +68,14 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 					allUsers = append(allUsers, resultsArray...)
 					if len(resultsArray) < pageSize {
 						break // last page
+					}
+					// Greptile P1 on PR #1899: a full page on the very last
+					// allowed iteration means there may be more data beyond
+					// the cap -- report that honestly instead of silently
+					// returning a subset that looks complete.
+					if page == maxPages-1 {
+						truncated = true
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: stopped after %d users (safety cap of %d pages) -- --search results may be incomplete; a matching user beyond this point would not be found\n", len(allUsers), maxPages)
 					}
 				}
 
@@ -90,7 +99,11 @@ func newOrgTopCmd(flags *rootFlags) *cobra.Command {
 						filteredUsers = append(filteredUsers, user)
 					}
 				}
-				filteredData, err := json.Marshal(map[string]any{"success": true, "result": filteredUsers})
+				envelopeOut := map[string]any{"success": true, "result": filteredUsers}
+				if truncated {
+					envelopeOut["truncated"] = true
+				}
+				filteredData, err := json.Marshal(envelopeOut)
 				if err != nil {
 					return fmt.Errorf("failed to marshal filtered users: %w", err)
 				}
