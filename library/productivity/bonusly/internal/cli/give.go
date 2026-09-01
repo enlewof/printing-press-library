@@ -52,6 +52,7 @@ func newGiveCmd(flags *rootFlags) *cobra.Command {
 				hashtag = strings.TrimPrefix(hashtag, "#")
 			}
 
+			var bareTokens []string
 			var mentions []string
 			for _, t := range flagTo {
 				t = strings.TrimSpace(t)
@@ -61,6 +62,7 @@ func newGiveCmd(flags *rootFlags) *cobra.Command {
 				if strings.ContainsAny(t, " \t\r\n") {
 					return fmt.Errorf("recipient %q contains a space — use an email or username instead, e.g. jane.doe@example.com or jane.doe", t)
 				}
+				bareTokens = append(bareTokens, strings.TrimPrefix(t, "@"))
 				if !strings.HasPrefix(t, "@") {
 					t = "@" + t
 				}
@@ -73,13 +75,12 @@ func newGiveCmd(flags *rootFlags) *cobra.Command {
 			mentionsStr := strings.Join(mentions, " ")
 			reasonSent := fmt.Sprintf("+%d %s %s #%s", flagAmount, mentionsStr, flagMessage, hashtag)
 
-			if dryRunOK(flags) {
-				// pp:hand-edit bonusly-endpoint-fix — was an unconditional
-				// Fprintln, so --dry-run --json produced plain text instead
-				// of JSON. writeDryRun already handles the --json branch.
-				return writeDryRun(cmd.OutOrStdout(), flags, "give "+reasonSent)
-			}
-
+			// Client is created before the --dry-run branch (moved up from
+			// its original post-dry-run position) so the live mention
+			// check below runs even during --dry-run: --dry-run only
+			// suppresses the mutating POST /bonuses further down, not this
+			// read-only GET, so a dry-run preview can still catch an
+			// unresolvable recipient before a real submission attempt.
 			c, err := flags.newClient()
 			if err != nil {
 				return err
@@ -87,6 +88,43 @@ func newGiveCmd(flags *rootFlags) *cobra.Command {
 
 			ctx, cancel := boundCtx(cmd.Context(), flags)
 			defer cancel()
+
+			// A whitespace-free --to value still isn't guaranteed to
+			// resolve (e.g. a typo, or a bare first name with no
+			// separator) -- only a live lookup against the real user
+			// directory can confirm it. Uses the same GET
+			// /users/autocomplete endpoint users_search.go fixed in this
+			// PR (F1). A lookup that itself fails (network/API error) is
+			// a warning, not a hard block -- the real POST remains the
+			// final source of truth either way.
+			for _, token := range bareTokens {
+				result, lookupErr := resolveMentionCandidate(ctx, c, flags, token, cmd.ErrOrStderr())
+				if lookupErr != nil || result.Skipped {
+					reason := result.SkipReason
+					if lookupErr != nil {
+						reason = lookupErr.Error()
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not verify recipient %q ahead of time (%s); the real submission will be the final check\n", token, reason)
+					continue
+				}
+				if !result.Matched {
+					if len(result.Suggestions) == 0 {
+						return fmt.Errorf("recipient %q does not match any user by username or email — use a full email or username instead, e.g. jane.doe@example.com", token)
+					}
+					var hints []string
+					for _, s := range result.Suggestions {
+						hints = append(hints, fmt.Sprintf("%s (%s)", s.DisplayName, s.Email))
+					}
+					return fmt.Errorf("recipient %q does not match any user by username or email — did you mean one of: %s? Use the full email or username instead", token, strings.Join(hints, "; "))
+				}
+			}
+
+			if dryRunOK(flags) {
+				// pp:hand-edit bonusly-endpoint-fix — was an unconditional
+				// Fprintln, so --dry-run --json produced plain text instead
+				// of JSON. writeDryRun already handles the --json branch.
+				return writeDryRun(cmd.OutOrStdout(), flags, "give "+reasonSent)
+			}
 
 			body := map[string]any{
 				"reason": reasonSent,

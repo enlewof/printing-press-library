@@ -4,25 +4,72 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
+	"github.com/mvanhorn/printing-press-library/library/productivity/bonusly/internal/client"
 	"github.com/spf13/cobra"
 )
 
-// validateMentionReason rejects a recognition "reason" string containing a
-// mention with a space immediately after "@" (e.g. "@Jane Doe"). Bonusly's
-// mention syntax is space-free tokens (username or email); a space-bearing
-// mention is silently accepted by the API's reason parser as "no recipient"
-// and fails opaquely later, so this check runs client-side for both the
-// --reason flag and the --stdin JSON body path (see call sites below) rather
-// than once for either alone.
-func validateMentionReason(reason string) error {
+// validateMentionReasonLive rejects a recognition "reason" string whose
+// mentions can't possibly work. Two checks run, in order:
+//
+//  1. Syntax: a mention with a space immediately after "@" (e.g. "@ text")
+//     is a literally empty mention token -- never valid, no lookup needed.
+//  2. Resolution: every other "@token" is checked against the real user
+//     directory via resolveMentionCandidate (GET /users/autocomplete, the
+//     endpoint users_search.go fixed in this same PR, F1). Bonusly's mention
+//     grammar has no terminator but whitespace, so "@Jane Doe"
+//     (a two-word display name typed as if it were one mention) is
+//     syntactically identical to a valid single-token mention like
+//     "@jane.doe" -- only a live check can tell them apart without
+//     false-positiving on legitimate single-token mentions (this is why an
+//     earlier version of this fix used a capitalization heuristic instead
+//     and was correctly rejected in review: it could never catch the
+//     original reported case without also breaking this CLI's own
+//     documented example, "+50 @jane.doe Great work...").
+//
+// A lookup that itself fails (network/API error) does not block the
+// command -- it's reported as a warning on hintWriter and that mention is
+// treated as unverified rather than invalid, so a flaky validation call
+// never becomes the reason a legitimate recognition fails to send. The real
+// POST /bonuses remains the final source of truth either way.
+func validateMentionReasonLive(ctx context.Context, c *client.Client, flags *rootFlags, reason string, hintWriter io.Writer) error {
 	for i := 0; i < len(reason)-1; i++ {
 		if reason[i] == '@' && (reason[i+1] == ' ' || reason[i+1] == '\t') {
 			return fmt.Errorf("reason contains an invalid mention with a space after @ — use an email or username with no space, e.g. @jane.doe@company.com or @janedoe")
+		}
+	}
+	for _, word := range strings.Fields(reason) {
+		if !strings.HasPrefix(word, "@") {
+			continue
+		}
+		token := word[1:]
+		if token == "" {
+			continue // caught by the empty-mention check above
+		}
+		result, err := resolveMentionCandidate(ctx, c, flags, token, hintWriter)
+		if err != nil || result.Skipped {
+			reason := result.SkipReason
+			if err != nil {
+				reason = err.Error()
+			}
+			fmt.Fprintf(hintWriter, "warning: could not verify mention %q ahead of time (%s); the real submission will be the final check\n", word, reason)
+			continue
+		}
+		if !result.Matched {
+			if len(result.Suggestions) == 0 {
+				return fmt.Errorf("mention %q does not match any user by username or email — Bonusly will read only the text up to the next space as the recipient, likely producing \"Reason is incomplete. You need a recipient.\" Use a full email or username instead, e.g. @jane.doe@example.com", word)
+			}
+			var hints []string
+			for _, s := range result.Suggestions {
+				hints = append(hints, fmt.Sprintf("%s (%s)", s.DisplayName, s.Email))
+			}
+			return fmt.Errorf("mention %q does not match any user by username or email — did you mean one of: %s? Use the full email or username, e.g. @jane.doe@example.com", word, strings.Join(hints, "; "))
 		}
 	}
 	return nil
@@ -82,9 +129,9 @@ func newRecognitionCreateCmd(flags *rootFlags) *cobra.Command {
 				// decoded JSON straight to body, bypassing the mention
 				// validation the --reason flag path applies below --
 				// --stdin is an equally real way to send a malformed
-				// whitespace-bearing mention, so validate it here too.
+				// mention, so validate it here too.
 				if reasonVal, ok := jsonBody["reason"].(string); ok {
-					if err := validateMentionReason(reasonVal); err != nil {
+					if err := validateMentionReasonLive(cmd.Context(), c, flags, reasonVal, cmd.ErrOrStderr()); err != nil {
 						return err
 					}
 				}
@@ -93,7 +140,7 @@ func newRecognitionCreateCmd(flags *rootFlags) *cobra.Command {
 				bodyMap := map[string]any{}
 				body = bodyMap
 				if cmd.Flags().Changed("reason") || bodyReason != "" {
-					if err := validateMentionReason(bodyReason); err != nil {
+					if err := validateMentionReasonLive(cmd.Context(), c, flags, bodyReason, cmd.ErrOrStderr()); err != nil {
 						return err
 					}
 					bodyMap["reason"] = bodyReason
