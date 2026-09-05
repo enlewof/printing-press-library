@@ -3,6 +3,11 @@
 
 package types
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 type Attendee struct {
 	AttendeeId        string  `json:"attendeeId"`
 	FirstName         string  `json:"firstName"`
@@ -42,15 +47,82 @@ type ExpenseTypeRef struct {
 	ListItemId string `json:"listItemId"`
 }
 
+// UnmarshalJSON accepts both the live API's nested object and a bare
+// string, for backward compatibility with any row cached locally before
+// this PR under the old flat expenseTypeCode string field. That old field
+// held the exact-match Concur Expense Type NAME (e.g. "Mobile/Cellular
+// Phone", not a short code, despite its name) -- mapped to Name here to
+// match how expenses_apply_rules.go actually keys off it. PATCH
+// (amend-2026-09-05: P1 review finding "Stored Expenses No Longer
+// Decode").
+func (e *ExpenseTypeRef) UnmarshalJSON(data []byte) error {
+	type alias ExpenseTypeRef
+	var a alias
+	if err := json.Unmarshal(data, &a); err == nil {
+		*e = ExpenseTypeRef(a)
+		return nil
+	}
+	var bare string
+	if err := json.Unmarshal(data, &bare); err == nil {
+		*e = ExpenseTypeRef{Name: bare}
+		return nil
+	}
+	return fmt.Errorf("ExpenseTypeRef: cannot unmarshal %s as either an object or a bare string", string(data))
+}
+
 type Money struct {
 	Value        float64 `json:"value"`
 	CurrencyCode string  `json:"currencyCode"`
+}
+
+// UnmarshalJSON accepts both the live API's nested {value, currencyCode}
+// object and a bare number, for backward compatibility with any row
+// cached locally before this PR under the old flat transactionAmount
+// float64 field. PATCH (amend-2026-09-05: P1 review finding "Stored
+// Expenses No Longer Decode" -- writeThroughCache persists raw API bytes
+// verbatim, so an older cached shape can still be read back). A bare
+// number carries no currency, so CurrencyCode is left empty rather than
+// guessed.
+func (m *Money) UnmarshalJSON(data []byte) error {
+	type alias Money
+	var a alias
+	if err := json.Unmarshal(data, &a); err == nil {
+		*m = Money(a)
+		return nil
+	}
+	var bare float64
+	if err := json.Unmarshal(data, &bare); err == nil {
+		*m = Money{Value: bare}
+		return nil
+	}
+	return fmt.Errorf("Money: cannot unmarshal %s as either {value,currencyCode} or a bare number", string(data))
 }
 
 type VendorRef struct {
 	Id          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+// UnmarshalJSON accepts both the live API's nested object and a bare
+// string, for backward compatibility with any row cached locally before
+// this PR under the old flat vendorDescription string field (mapped to
+// Description here, matching how callers read it post-fix). PATCH
+// (amend-2026-09-05: P1 review finding "Stored Expenses No Longer
+// Decode").
+func (v *VendorRef) UnmarshalJSON(data []byte) error {
+	type alias VendorRef
+	var a alias
+	if err := json.Unmarshal(data, &a); err == nil {
+		*v = VendorRef(a)
+		return nil
+	}
+	var bare string
+	if err := json.Unmarshal(data, &bare); err == nil {
+		*v = VendorRef{Description: bare}
+		return nil
+	}
+	return fmt.Errorf("VendorRef: cannot unmarshal %s as either an object or a bare string", string(data))
 }
 
 type PaymentTypeRef struct {
@@ -69,6 +141,56 @@ type Expense struct {
 	BusinessPurpose       string          `json:"businessPurpose"`
 	HasExceptions         bool            `json:"hasExceptions"`
 	HasBlockingExceptions bool            `json:"hasBlockingExceptions"`
+}
+
+// UnmarshalJSON tolerates a locally-cached row written under the pre-F2
+// flat schema (a single "hasException" key) alongside the live API's
+// current "hasExceptions"/"hasBlockingExceptions" pair. PATCH
+// (amend-2026-09-05: P1 review finding "Stored Expenses No Longer
+// Decode" -- writeThroughCache persists raw API bytes verbatim, so any
+// row cached before this PR's struct change can still be read back).
+// The single legacy flag is mapped to HasExceptions only (the more
+// general of the two); HasBlockingExceptions is unknowable from that one
+// old flag and is left false rather than guessed.
+func (e *Expense) UnmarshalJSON(data []byte) error {
+	type alias Expense
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return fmt.Errorf("Expense: %w", err)
+	}
+	*e = Expense(a)
+
+	// The pre-F2 flat schema used entirely different KEY NAMES for these
+	// four fields (expenseTypeCode, transactionCurrencyCode,
+	// vendorDescription, hasException) -- not just a different value
+	// shape under the same key, which Money/ExpenseTypeRef/VendorRef's
+	// own UnmarshalJSON already tolerates. A renamed key never gets fed
+	// to those nested unmarshalers at all: the primary decode above
+	// simply leaves the new-named field at its zero value. Check for the
+	// old key names explicitly and backfill only fields that never
+	// resolved, so a genuinely current-shaped row is never overwritten.
+	var legacy struct {
+		ExpenseTypeCode         *string `json:"expenseTypeCode"`
+		TransactionCurrencyCode *string `json:"transactionCurrencyCode"`
+		VendorDescription       *string `json:"vendorDescription"`
+		HasException            *bool   `json:"hasException"`
+	}
+	if json.Unmarshal(data, &legacy) != nil {
+		return nil // primary decode above already succeeded; this pass is best-effort
+	}
+	if e.ExpenseType.Name == "" && legacy.ExpenseTypeCode != nil {
+		e.ExpenseType.Name = *legacy.ExpenseTypeCode
+	}
+	if e.TransactionAmount.CurrencyCode == "" && legacy.TransactionCurrencyCode != nil {
+		e.TransactionAmount.CurrencyCode = *legacy.TransactionCurrencyCode
+	}
+	if e.Vendor.Description == "" && legacy.VendorDescription != nil {
+		e.Vendor.Description = *legacy.VendorDescription
+	}
+	if !e.HasExceptions && !e.HasBlockingExceptions && legacy.HasException != nil {
+		e.HasExceptions = *legacy.HasException
+	}
+	return nil
 }
 
 type ExpenseType struct {
