@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "id": "expenses-and-reports-list-live-shape-fixes",
+  "applied_at": "2026-09-05",
+  "base_run_id": "20260812-144651-60addfc5",
+  "base_printing_press_version": "4.30.3",
+  "summary": "Fix 4 independent live-shape mismatches on expenses apply-rules, sync, and reports list commands. (F1: Correct apply-rules endpoint path; F2: Re-align types.Expense fields with live nested structure; F3: Safe honest fallback for expenses sync; F4: Page-based HAL pagination for reports list)",
+  "reason": "Live-verification session revealed shape mismatches against real API: apply-rules fetched report headers instead of expenses; types.Expense expected flat fields when they are actually objects; sync --resources expenses failed with unknown resource when it requires parent context; and reports list returned zero results because Concur uses Spring HATEOAS/HAL envelopes instead of flat cursor models. Reshaping these elements restores correct CLI behaviors without regressions.",
+  "files": [
+    "internal/types/types.go",
+    "internal/cli/expenses_apply_rules.go",
+    "internal/cli/expenses_scan_duplicates.go",
+    "internal/cli/sync.go",
+    "internal/cli/reports_list.go",
+    "internal/cli/helpers.go",
+    "internal/cli/expenses_apply_rules_test.go",
+    "internal/cli/reports_list_test.go"
+  ],
+  "call_sites": [
+    "type Expense struct",
+    "exp.ExpenseType.Name",
+    "knownSyncResourceNames(",
+    "syncResourcePath(",
+    "resolvePaginatedReadWithStrategy(",
+    "hasHALNext"
+  ],
+  "changes": [
+    {
+      "file": "internal/types/types.go",
+      "description": "Reshaped types.Expense and defined nested sub-types (ExpenseTypeRef, Money, VendorRef, PaymentTypeRef) to match live API response structure."
+    },
+    {
+      "file": "internal/cli/expenses_apply_rules.go",
+      "description": "Fixed endpoint path from /reports/{id} to /reports/{id}/expenses, updated preview mock records and rule-checking logic to use nested types.Expense fields."
+    },
+    {
+      "file": "internal/cli/expenses_scan_duplicates.go",
+      "description": "Updated grouping keys and vendor description extraction to use new nested types.Expense fields."
+    },
+    {
+      "file": "internal/cli/sync.go",
+      "description": "Registered 'expenses' under knownSyncResourceNames and updated syncResourcePath to return an informative fallback error stating per-report iteration is required but not yet implemented."
+    },
+    {
+      "file": "internal/cli/reports_list.go",
+      "description": "Re-configured paginated read strategy to use page, page, size (100) and omit hasMore field."
+    },
+    {
+      "file": "internal/cli/helpers.go",
+      "description": "Added content as a canonical pagination collection key, and implemented Spring HAL/HATEOAS link pagination (links and _links next rel checking) in paginatedGet."
+    },
+    {
+      "file": "internal/cli/expenses_apply_rules_test.go",
+      "description": "Added TestExpensesApplyRules_LiveShapeMismatches to verify endpoint path /expenses and F2 struct unmarshal success, and TestSyncExpenses_ReturnsSpecificError to verify F3 fallback."
+    },
+    {
+      "file": "internal/cli/reports_list_test.go",
+      "description": "Added TestReportsList_SpringHALPagination to verify F4 Spring HAL style pagination and content extraction over 2 pages."
+    }
+  ],
+  "validated_outcome": "All unit tests pass cleanly with zero regressions. Validation checks verify that the reports list command can correctly traverse and compile multi-page HAL-style envelopes and that expenses apply-rules correctly targets the expenses list endpoint.",
+  "findings_addressed": [
+    "F1",
+    "F2",
+    "F3",
+    "F4"
+  ],
+  "deferred_to_upstream": [],
+  "upstream_issue": null
+}

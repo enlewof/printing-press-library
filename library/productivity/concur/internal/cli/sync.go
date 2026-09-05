@@ -391,6 +391,9 @@ func syncResource(ctx context.Context, c interface {
 
 	path, err := syncResourcePath(resource)
 	if err != nil {
+		if !humanFriendly {
+			fmt.Fprintln(syncEvents, syncErrorJSON(resource, "", err))
+		}
 		return syncResult{Resource: resource, Err: err, Duration: time.Since(started)}
 	}
 
@@ -1878,6 +1881,7 @@ func knownSyncResourceNames() []string {
 		"attendees",
 		"delegates",
 		"expense_types",
+		"expenses", // PATCH(amend-2026-09-05: F3 register expenses)
 		"lists",
 		"locations",
 		"payment_types",
@@ -1909,6 +1913,10 @@ func describeResourceFailure(count int, label string, resources []string) string
 // For REST APIs this is typically "/<resource>". For non-REST APIs (e.g., Steam)
 // this preserves the actual endpoint path like "/ISteamApps/GetAppList/v2".
 func syncResourcePath(resource string) (string, error) {
+	if resource == "expenses" {
+		// PATCH(amend-2026-09-05: F3 expenses requires per-report iteration, not yet implemented)
+		return "", fmt.Errorf("expenses sync requires per-report iteration, not yet implemented (there is no flat \"all expenses\" endpoint) — 'expenses scan-duplicates' will not have real data until this lands; use 'expenses apply-rules <report_id>' directly against individual reports (it reads live, not from the local store) in the meantime")
+	}
 	paths := map[string]string{ // #nosec G101 -- endpoint paths, not credentials.
 		"attendee_types": "/v4/attendeetypes",
 		"attendees":      "/attendees/v4/attendees",

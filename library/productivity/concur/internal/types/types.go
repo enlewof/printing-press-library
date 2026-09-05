@@ -33,15 +33,42 @@ type Delegator struct {
 	CanViewReceipts bool   `json:"canViewReceipts"`
 }
 
+// PATCH(amend-2026-09-05: F2 refactor to match live API response structure)
+type ExpenseTypeRef struct {
+	Id         string `json:"id"`
+	Name       string `json:"name"`
+	Code       string `json:"code"`
+	IsDeleted  bool   `json:"isDeleted"`
+	ListItemId string `json:"listItemId"`
+}
+
+type Money struct {
+	Value        float64 `json:"value"`
+	CurrencyCode string  `json:"currencyCode"`
+}
+
+type VendorRef struct {
+	Id          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type PaymentTypeRef struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+	Code string `json:"code"`
+}
+
 type Expense struct {
-	ExpenseId               string  `json:"expenseId"`
-	ExpenseTypeCode         string  `json:"expenseTypeCode"`
-	TransactionDate         string  `json:"transactionDate"`
-	TransactionAmount       float64 `json:"transactionAmount"`
-	TransactionCurrencyCode string  `json:"transactionCurrencyCode"`
-	VendorDescription       string  `json:"vendorDescription"`
-	BusinessPurpose         string  `json:"businessPurpose"`
-	HasException            bool    `json:"hasException"`
+	ExpenseId             string          `json:"expenseId"`
+	ExpenseType           ExpenseTypeRef  `json:"expenseType"`
+	TransactionDate       string          `json:"transactionDate"`
+	TransactionAmount     Money           `json:"transactionAmount"`
+	Vendor                VendorRef       `json:"vendor"`
+	PaymentType           PaymentTypeRef  `json:"paymentType"`
+	BusinessPurpose       string          `json:"businessPurpose"`
+	HasExceptions         bool            `json:"hasExceptions"`
+	HasBlockingExceptions bool            `json:"hasBlockingExceptions"`
 }
 
 type ExpenseType struct {

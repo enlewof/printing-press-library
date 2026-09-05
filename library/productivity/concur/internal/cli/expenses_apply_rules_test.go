@@ -4,6 +4,9 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,5 +97,138 @@ func TestExpensesApplyRulesEmptyConfigIsNoOp(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"changes":null`) && !strings.Contains(out.String(), `"changes": null`) {
 		t.Fatalf("expected empty changes for a missing config, got:\n%s", out.String())
+	}
+}
+
+// TestExpensesApplyRules_LiveShapeMismatches covers F1 and F2:
+// verifies apply-rules GETs /reports/{id}/expenses and successfully
+// parses a real nested live API response shape.
+func TestExpensesApplyRules_LiveShapeMismatches(t *testing.T) {
+	configPath := writeTestExpenseRulesConfig(t)
+
+	// Set up mock HTTP server
+	apiCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalls++
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/reports/some-report-id/expenses") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[
+				{
+					"expenseId": "exp-real-1",
+					"expenseType": {
+						"id": "CELPH",
+						"name": "Mobile/Cellular Phone",
+						"code": "CELPH",
+						"isDeleted": false,
+						"listItemId": "item-1"
+					},
+					"transactionDate": "2026-09-01",
+					"transactionAmount": {
+						"value": 65.00,
+						"currencyCode": "USD"
+					},
+					"vendor": {
+						"id": "vendor-1",
+						"name": null,
+						"description": "on-call cell phone"
+					},
+					"paymentType": {
+						"id": "PAY-1",
+						"name": "Corporate Card",
+						"code": "CORP"
+					},
+					"businessPurpose": "",
+					"hasExceptions": false,
+					"hasBlockingExceptions": false
+				}
+			]`))
+			return
+		}
+		if r.Method == "PATCH" && strings.Contains(r.URL.Path, "/expenses/exp-real-1") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	t.Setenv("CONCUR_BASE_URL", server.URL)
+	t.Setenv("PRINTING_PRESS_VERIFY", "1")
+	t.Setenv("PRINTING_PRESS_VERIFY_LIVE_HTTP", "1")
+
+	cmd := RootCmd()
+	cmd.SetArgs([]string{
+		"expenses", "apply-rules", "some-report-id",
+		"--user-id", "test-user-id",
+		"--config", configPath,
+		"--yes",
+		"--json",
+	})
+
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(os.Stderr)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if apiCalls != 2 {
+		t.Errorf("expected 2 API calls (1 GET, 1 PATCH), got %d", apiCalls)
+	}
+
+	var envelope map[string]any
+	if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+		t.Fatalf("failed to unmarshal output JSON: %v", err)
+	}
+
+	changes, ok := envelope["changes"].([]any)
+	if !ok || len(changes) == 0 {
+		t.Fatalf("expected at least one rule change, got envelope: %+v", envelope)
+	}
+
+	foundSetPurpose := false
+	foundExceedsCap := false
+	for _, c := range changes {
+		m, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		changeType := m["change_type"].(string)
+		if changeType == "set_business_purpose" {
+			foundSetPurpose = true
+		}
+		if changeType == "exceeds_cap_needs_manual_split" {
+			foundExceedsCap = true
+		}
+	}
+
+	if !foundSetPurpose {
+		t.Error("expected a business purpose change to be applied/logged")
+	}
+	if !foundExceedsCap {
+		t.Error("expected a cap overage warning to be logged")
+	}
+}
+
+// TestSyncExpenses_ReturnsSpecificError covers F3:
+// asserts a helpful, specific error when syncing expenses.
+func TestSyncExpenses_ReturnsSpecificError(t *testing.T) {
+	cmd := RootCmd()
+	cmd.SetArgs([]string{"sync", "--resources", "expenses"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected sync --resources expenses to fail, got nil")
+	}
+	expectedMsg := "expenses sync requires per-report iteration, not yet implemented"
+	if !strings.Contains(out.String(), expectedMsg) {
+		t.Fatalf("expected output to contain %q, but got:\n%s", expectedMsg, out.String())
 	}
 }

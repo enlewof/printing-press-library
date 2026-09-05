@@ -116,7 +116,8 @@ func newExpensesApplyRulesCmd(flags *rootFlags) *cobra.Command {
 			}
 
 			if err == nil {
-				path := "/expensereports/v4/users/{user_id}/context/{context_type}/reports/{report_id}"
+				// PATCH(amend-2026-09-05: F1 use correct endpoint /reports/{id}/expenses)
+				path := "/expensereports/v4/users/{user_id}/context/{context_type}/reports/{report_id}/expenses"
 				path = replacePathParam(path, "report_id", reportID)
 				path = replacePathParam(path, "user_id", formatCLIParamValue(flagUserId))
 				path = replacePathParam(path, "context_type", formatCLIParamValue(flagContextType))
@@ -127,9 +128,22 @@ func newExpensesApplyRulesCmd(flags *rootFlags) *cobra.Command {
 						return classifyAPIError(readErr, flags)
 					}
 					fmt.Fprintln(cmd.ErrOrStderr(), "dry-run: could not reach the live API (no/expired session) -- previewing with simulated example data, not your real report")
+					// PATCH(amend-2026-09-05: F2 construct using corrected types.Expense fields)
 					expenses = []types.Expense{
-						{ExpenseId: "exp-1", ExpenseTypeCode: "Mobile/Cellular Phone", TransactionAmount: 65.00, BusinessPurpose: ""},
-						{ExpenseId: "exp-2", ExpenseTypeCode: "Fitness", TransactionAmount: 30.00, BusinessPurpose: "gym"},
+						{
+							ExpenseId: "exp-1",
+							ExpenseType: types.ExpenseTypeRef{Name: "Mobile/Cellular Phone", Code: "CELPH"},
+							TransactionAmount: types.Money{Value: 65.00, CurrencyCode: "USD"},
+							Vendor: types.VendorRef{Description: "on-call cell phone"},
+							BusinessPurpose: "",
+						},
+						{
+							ExpenseId: "exp-2",
+							ExpenseType: types.ExpenseTypeRef{Name: "Fitness", Code: "FITNS"},
+							TransactionAmount: types.Money{Value: 30.00, CurrencyCode: "USD"},
+							Vendor: types.VendorRef{Description: "gym"},
+							BusinessPurpose: "gym",
+						},
 					}
 				} else {
 					var nested struct {
@@ -158,20 +172,34 @@ func newExpensesApplyRulesCmd(flags *rootFlags) *cobra.Command {
 				}
 			} else {
 				fmt.Fprintln(cmd.ErrOrStderr(), "dry-run: no client/auth configured -- previewing with simulated example data, not your real report")
+				// PATCH(amend-2026-09-05: F2 construct using corrected types.Expense fields)
 				expenses = []types.Expense{
-					{ExpenseId: "exp-1", ExpenseTypeCode: "Mobile/Cellular Phone", TransactionAmount: 65.00, BusinessPurpose: ""},
-					{ExpenseId: "exp-2", ExpenseTypeCode: "Fitness", TransactionAmount: 30.00, BusinessPurpose: "gym"},
+					{
+						ExpenseId: "exp-1",
+						ExpenseType: types.ExpenseTypeRef{Name: "Mobile/Cellular Phone", Code: "CELPH"},
+						TransactionAmount: types.Money{Value: 65.00, CurrencyCode: "USD"},
+						Vendor: types.VendorRef{Description: "on-call cell phone"},
+						BusinessPurpose: "",
+					},
+					{
+						ExpenseId: "exp-2",
+						ExpenseType: types.ExpenseTypeRef{Name: "Fitness", Code: "FITNS"},
+						TransactionAmount: types.Money{Value: 30.00, CurrencyCode: "USD"},
+						Vendor: types.VendorRef{Description: "gym"},
+						BusinessPurpose: "gym",
+					},
 				}
 			}
 
+			// PATCH(amend-2026-09-05: F2 update loop to use corrected types.Expense nested structures)
 			var changes []appliedRuleChange
 			for _, exp := range expenses {
-				rule, ok := config[exp.ExpenseTypeCode]
+				rule, ok := config[exp.ExpenseType.Name]
 				if !ok {
 					continue
 				}
 				needsPurpose := exp.BusinessPurpose == ""
-				exceedsCap := rule.ReimbursementCap != nil && exp.TransactionAmount > *rule.ReimbursementCap
+				exceedsCap := rule.ReimbursementCap != nil && exp.TransactionAmount.Value > *rule.ReimbursementCap
 
 				if !needsPurpose && !exceedsCap {
 					continue // already up to date, safe to re-run
@@ -180,7 +208,7 @@ func newExpensesApplyRulesCmd(flags *rootFlags) *cobra.Command {
 				if needsPurpose {
 					if flags.dryRun {
 						changes = append(changes, appliedRuleChange{
-							ExpenseId: exp.ExpenseId, ExpenseType: exp.ExpenseTypeCode,
+							ExpenseId: exp.ExpenseId, ExpenseType: exp.ExpenseType.Name,
 							ChangeType: "would_set_business_purpose",
 							Detail:     fmt.Sprintf("dry-run: would set Business Purpose to %q", rule.BusinessPurpose),
 						})
@@ -194,7 +222,7 @@ func newExpensesApplyRulesCmd(flags *rootFlags) *cobra.Command {
 							return fmt.Errorf("setting business purpose on expense %s: %w", exp.ExpenseId, classifyAPIError(err, flags))
 						}
 						changes = append(changes, appliedRuleChange{
-							ExpenseId: exp.ExpenseId, ExpenseType: exp.ExpenseTypeCode,
+							ExpenseId: exp.ExpenseId, ExpenseType: exp.ExpenseType.Name,
 							ChangeType: "set_business_purpose",
 							Detail:     fmt.Sprintf("Business Purpose set to %q", rule.BusinessPurpose),
 						})
@@ -205,10 +233,10 @@ func newExpensesApplyRulesCmd(flags *rootFlags) *cobra.Command {
 					// See the command's Long description: itemization is
 					// deliberately not automated without a verified endpoint.
 					changes = append(changes, appliedRuleChange{
-						ExpenseId: exp.ExpenseId, ExpenseType: exp.ExpenseTypeCode,
+						ExpenseId: exp.ExpenseId, ExpenseType: exp.ExpenseType.Name,
 						ChangeType: "exceeds_cap_needs_manual_split",
 						Detail: fmt.Sprintf("Amount %.2f exceeds reimbursement cap %.2f -- itemize the personal remainder manually in Concur",
-							exp.TransactionAmount, *rule.ReimbursementCap),
+							exp.TransactionAmount.Value, *rule.ReimbursementCap),
 					})
 				}
 			}

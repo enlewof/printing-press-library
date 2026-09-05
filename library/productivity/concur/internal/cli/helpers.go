@@ -897,6 +897,60 @@ func paginatedGet(ctx context.Context, c interface {
 						}
 					}
 				}
+				// PATCH(amend-2026-09-05: F4 Spring HAL / HATEOAS pagination support)
+				hasHALNext := false
+				hasHALLinks := false
+				if rawLinks, ok := obj["links"]; ok {
+					var links []struct {
+						Rel  string `json:"rel"`
+						Href string `json:"href"`
+					}
+					if json.Unmarshal(rawLinks, &links) == nil {
+						hasHALLinks = true
+						for _, link := range links {
+							if link.Rel == "next" {
+								hasHALNext = true
+								break
+							}
+						}
+					}
+				}
+				if !hasHALLinks {
+					if rawLinks, ok := obj["_links"]; ok {
+						var links map[string]struct {
+							Href string `json:"href"`
+						}
+						if json.Unmarshal(rawLinks, &links) == nil {
+							hasHALLinks = true
+							if _, ok := links["next"]; ok {
+								hasHALNext = true
+							}
+						}
+					}
+				}
+
+				if hasHALLinks {
+					if hasHALNext {
+						nextPageSize := pageSize
+						if nextPageSize <= 0 {
+							nextPageSize = itemCount
+							if nextPageSize <= 0 {
+								nextPageSize = 1
+							}
+						}
+						if next, ok := nextClientSidePaginationCursor(clean, cursorParam, paginationType, nextPageSize); ok {
+							if page >= paginatedGetMaxPages {
+								emitPaginatedGetMaxPagesWarning(ctx)
+								break
+							}
+							clean[cursorParam] = next
+							continue
+						}
+					}
+					// If links are present but "next" rel is absent, it is the last page, so stop.
+					break
+				}
+
 				if !hasExplicitNoMore && nextCursorPath == "" && hasMoreField == "" {
 					if next, ok := nextFullPageOffsetCursor(clean, cursorParam, paginationType, pageSize, itemCount); ok {
 						if page >= paginatedGetMaxPages {
@@ -996,6 +1050,7 @@ func isJSONArray(raw json.RawMessage) bool {
 var canonicalPaginationCollectionKeys = map[string]bool{
 	responsePathItemsKey: true,
 	"data":               true, "items": true, "results": true, "messages": true, "members": true, "values": true,
+	"content":            true, // PATCH(amend-2026-09-05: F4 support content collection field)
 }
 
 func deleteRawPath(obj map[string]json.RawMessage, path string) {
@@ -1203,7 +1258,7 @@ func extractPaginatedItemsFromObject(obj map[string]json.RawMessage, requestPath
 	}
 
 	if allowEmbedded {
-		for _, field := range []string{responsePathItemsKey, "data", "items", "results", "messages", "members", "values"} {
+		for _, field := range []string{responsePathItemsKey, "data", "items", "results", "messages", "members", "values", "content"} {
 			if arr, ok := obj[field]; ok {
 				var nested []json.RawMessage
 				if json.Unmarshal(arr, &nested) == nil {

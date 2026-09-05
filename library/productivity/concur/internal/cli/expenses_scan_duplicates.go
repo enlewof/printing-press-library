@@ -110,7 +110,8 @@ func newNovelExpensesScanDuplicatesCmd(flags *rootFlags) *cobra.Command {
 				return printJSONFiltered(cmd.OutOrStdout(), scanDuplicatesResult{DuplicateGroups: nil}, flags)
 			}
 
-			// Group by (vendorDescription case-insensitive, transactionAmount exact match)
+			// PATCH(amend-2026-09-05: F2 update group key generation for types.Expense nested structures)
+			// Group by (vendor.description case-insensitive, transactionAmount.value exact match)
 			type groupKey struct {
 				vendor string
 				amount string
@@ -118,8 +119,8 @@ func newNovelExpensesScanDuplicatesCmd(flags *rootFlags) *cobra.Command {
 			groups := make(map[groupKey][]types.Expense)
 			for _, exp := range expenses {
 				k := groupKey{
-					vendor: strings.ToLower(strings.TrimSpace(exp.VendorDescription)),
-					amount: fmt.Sprintf("%.2f", exp.TransactionAmount),
+					vendor: strings.ToLower(strings.TrimSpace(exp.Vendor.Description)),
+					amount: fmt.Sprintf("%.2f", exp.TransactionAmount.Value),
 				}
 				groups[k] = append(groups[k], exp)
 			}
@@ -174,8 +175,9 @@ func newNovelExpensesScanDuplicatesCmd(flags *rootFlags) *cobra.Command {
 						// safer than fabricated data if it ever does.
 						continue
 					}
+					// PATCH(amend-2026-09-05: F2 update vendor access to nested structure)
 					dupGroups = append(dupGroups, duplicateGroup{
-						Vendor:   group[0].VendorDescription, // Original case
+						Vendor:   group[0].Vendor.Description, // Original case
 						Amount:   amountVal,
 						Expenses: dupInGroup,
 					})

@@ -65,10 +65,11 @@ func newReportsListCmd(flags *rootFlags) *cobra.Command {
 			}
 			path = replacePathParam(path, "user_id", formatCLIParamValue(flagUserId))
 			path = replacePathParam(path, "context_type", formatCLIParamValue(flagContextType))
+			// PATCH(amend-2026-09-05: F4 configure for Spring HAL / page-based pagination)
 			data, prov, err := resolvePaginatedReadWithStrategy(cmd.Context(), c, flags, "live", "reports", path, map[string]string{
 				"status":        formatCLIParamValue(flagStatus),
 				"created_after": formatCLIParamValue(flagCreatedAfter),
-			}, nil, flagAll, "", "page_token", "", 0, "", "hasMore", "", cmd.ErrOrStderr())
+			}, nil, flagAll, "page", "page", "size", 100, "", "", "", cmd.ErrOrStderr())
 			if err != nil {
 				return classifyAPIError(err, flags)
 			}
