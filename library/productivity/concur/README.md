@@ -147,7 +147,7 @@ The fallback derives which Concur web UI host to open from your configured API b
 
 Confirmed live: once an `expenses create` request body passes every client-side validation check, the API returns a generic HTTP 404 ("No static resource") instead of 201 -- this looks like a genuine Concur-backend defect, not a client-side bug, since deliberately-invalid bodies correctly get a clean 400 instead. `expenses create` has the same kind of transparent browser-automation fallback as `reports create`: on that exact 404 signature, it drives Concur's real "New Expense" form (same `agent-browser` CDP-attach-or-isolated-login mechanism as `hotels search` and the `reports create` fallback above) instead of failing outright.
 
-Because the browser never surfaces a usable expense ID, success is confirmed by diffing the report's expense list before and after the form's Save click -- so this fallback needs one read that pure-HTTP creation didn't: `GET .../reports/{id}/expenses`, which is unaffected by the defect. The Transaction Date field defaults to today in Concur's form (a `--date` other than today only warns, since that field has no stable accessible name to target reliably); Payment Type defaults to Cash, matching this CLI's own default (a non-Cash `--payment-type` only warns too, since changing it away from the default was not verified live). Like the `reports create` fallback, a failure after the irreversible Save click is reported as a possible partial success, not an ordinary retryable error.
+Because the browser never surfaces a usable expense ID, success is confirmed by diffing the report's expense list before and after the form's Save click -- so this fallback needs one read that pure-HTTP creation didn't: `GET .../reports/{id}/expenses`, which is unaffected by the defect. The Transaction Date field defaults to today in Concur's form (a `--date` other than today only warns, since that field has no stable accessible name to target reliably); Payment Type defaults to Cash, matching this CLI's own default (a non-Cash `--payment-type` only warns too, since changing it away from the default was not verified live). Like the `reports create` fallback, a failure after the irreversible Save click is reported as a possible partial success, not an ordinary retryable error. Triggers for a `--stdin` body just as reliably as the flag-driven path -- the fields it needs are read from the already-constructed request body, not the command's flag variables (which are always empty for a `--stdin` call).
 
 ## Quick Start
 
@@ -226,14 +226,19 @@ Both create a live shopping session against your real tenant -- searches only, n
 ```bash
 concur-pp-cli expenses create \
   --report-id <report-id> --user-id <user-id> \
-  --type CELPH --date 2026-09-15 --amount 50 \
-  --payment-type CASH --vendor "on-call cell phone" \
+  --type 01000 --date 2026-09-15 --amount 50 \
+  --payment-type CASH --vendor "F45 Training Culver City" --business-purpose "gym" \
   --agent
 ```
 
 `--type`/`--payment-type` take the `expenseTypeId`/`paymentTypeId` codes from `expense-types
-list`/`payment-types` (not display names). `--currency` only warns if set to something other
-than `USD` -- no working currency-override field has been confirmed live for this endpoint; the
+list`/`payment-types` (not display names). `--vendor` and `--business-purpose` are distinct
+Concur form fields (confirmed live 2026-09-15) -- "Vendor Description" is who you paid,
+"Business Purpose" is why; don't conflate them (e.g. don't put "gym" in `--vendor`, it belongs
+in `--business-purpose`). Setting `--business-purpose` at creation time also means you never need
+`expenses apply-rules`' PATCH-based fill, which hits this same command's confirmed-live 404
+defect just like creation itself used to. `--currency` only warns if set to something other than
+`USD` -- no working currency-override field has been confirmed live for this endpoint; the
 expense inherits the report/policy default currency instead. If the API's confirmed-live 404
 defect fires on this request, it now falls back to browser automation automatically instead of
 just failing -- see "Browser-automation fallback for expense creation" under Authentication.

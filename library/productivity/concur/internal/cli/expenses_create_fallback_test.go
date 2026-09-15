@@ -88,6 +88,51 @@ func TestIsExpensesCreate404DefectError(t *testing.T) {
 	}
 }
 
+// TestExtractExpenseFallbackParams covers reading the fallback's needed
+// fields from an already-constructed body map, for BOTH input paths this
+// command supports: the flag-driven object shape this file builds, and an
+// arbitrary --stdin caller's JSON (which the fallback must also work for
+// now that the !stdinBody exclusion has been removed -- a --stdin caller's
+// flag variables are always empty, so extraction has to read the body
+// itself, not the flags).
+func TestExtractExpenseFallbackParams(t *testing.T) {
+	t.Run("flag-driven object shape", func(t *testing.T) {
+		body := map[string]any{
+			"expenseType":       map[string]any{"code": "01000"},
+			"paymentType":       map[string]any{"id": "CASH"},
+			"transactionDate":   "2026-09-15",
+			"transactionAmount": 50.0,
+			"vendor":            map[string]any{"name": "F45 Training"},
+			"businessPurpose":   "gym",
+		}
+		typeCode, paymentType, txDate, amt, vendor, purpose := extractExpenseFallbackParams(body)
+		if typeCode != "01000" || paymentType != "CASH" || txDate != "2026-09-15" || amt != 50.0 || vendor != "F45 Training" || purpose != "gym" {
+			t.Errorf("got (%q, %q, %q, %v, %q, %q)", typeCode, paymentType, txDate, amt, vendor, purpose)
+		}
+	})
+
+	t.Run("stdin caller using description instead of name for vendor", func(t *testing.T) {
+		body := map[string]any{
+			"expenseType":       map[string]any{"code": "CELPH"},
+			"paymentType":       map[string]any{"id": "CASH"},
+			"transactionDate":   "2026-09-15",
+			"transactionAmount": 50.0,
+			"vendor":            map[string]any{"description": "on-call cell phone"},
+		}
+		_, _, _, _, vendor, _ := extractExpenseFallbackParams(body)
+		if vendor != "on-call cell phone" {
+			t.Errorf("expected vendor extracted from the description sub-field, got %q", vendor)
+		}
+	})
+
+	t.Run("non-map body returns zero values instead of panicking", func(t *testing.T) {
+		typeCode, paymentType, txDate, amt, vendor, purpose := extractExpenseFallbackParams("not a map")
+		if typeCode != "" || paymentType != "" || txDate != "" || amt != 0 || vendor != "" || purpose != "" {
+			t.Errorf("expected all zero values for a non-map body, got (%q, %q, %q, %v, %q, %q)", typeCode, paymentType, txDate, amt, vendor, purpose)
+		}
+	})
+}
+
 // TestDiffNewExpense covers the before/after expense-list diff used to
 // identify what the browser fallback's Save Expense click created, since
 // the browser itself never surfaces a usable expense ID.
@@ -316,6 +361,88 @@ exit 0
 		}
 		if _, err := os.Stat(stateFile); !os.IsNotExist(err) {
 			t.Error("expected browser fallback NOT to be driven, but state file exists")
+		}
+	})
+
+	// StdinBody_ALSOTriggersFallback covers the fix removing this fallback's
+	// former !stdinBody exclusion: a --stdin caller's flag variables are
+	// always empty, so the OLD code could never drive the fallback for
+	// that input path at all (the confirmed-live 404 defect would just
+	// surface as a plain error, no matter which input path hit it).
+	// Redirects the real os.Stdin via a pipe since expenses_create.go
+	// reads directly from os.Stdin, not through cobra's InOrStdin().
+	t.Run("StdinBody_ALSOTriggersFallback", func(t *testing.T) {
+		_ = os.Remove(stateFile)
+
+		apiCalls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiCalls++
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.Method == "POST" && strings.Contains(r.URL.Path, "/expenses"):
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"errorMessage":"No static resource /expensereports/v4/users/test-user-id/context/TRAVELER/reports/mock-report/expenses."}`))
+			case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/expenses"):
+				if _, err := os.Stat(stateFile); err == nil {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[{"expenseId":"exp-new-stdin-1","transactionAmount":50}]`))
+				} else {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`[]`))
+				}
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		t.Setenv("CONCUR_BASE_URL", server.URL)
+		t.Setenv("CONCUR_UI_BASE_URL", "https://us2.concursolutions.com")
+		t.Setenv("PRINTING_PRESS_VERIFY", "1")
+		t.Setenv("PRINTING_PRESS_VERIFY_LIVE_HTTP", "1")
+
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("creating pipe: %v", err)
+		}
+		origStdin := os.Stdin
+		os.Stdin = r
+		t.Cleanup(func() { os.Stdin = origStdin })
+
+		stdinBody := `{"expenseType":{"code":"01000"},"transactionAmount":50,"transactionDate":"2026-09-15","paymentType":{"id":"CASH"},"vendor":{"name":"F45 Training"},"businessPurpose":"gym"}`
+		go func() {
+			_, _ = w.Write([]byte(stdinBody))
+			_ = w.Close()
+		}()
+
+		cmd := RootCmd()
+		cmd.SetArgs([]string{
+			"expenses", "create",
+			"--user-id", "test-user-id",
+			"--report-id", "mock-report",
+			"--stdin",
+			"--json",
+		})
+
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+			t.Error("expected browser fallback to be driven for a --stdin body too, but state file does not exist")
+		}
+
+		var envelope map[string]any
+		if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+			t.Fatalf("failed to unmarshal output JSON: %v", err)
+		}
+		data, ok := envelope["data"].(map[string]any)
+		if !ok || data["expenseId"] != "exp-new-stdin-1" {
+			t.Errorf("expected the diffed new expense in the response for the --stdin path, got %+v", envelope)
 		}
 	})
 

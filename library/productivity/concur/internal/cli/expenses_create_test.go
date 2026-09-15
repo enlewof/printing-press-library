@@ -166,3 +166,64 @@ func TestExpensesCreate_NonUSDCurrencyWarns(t *testing.T) {
 		}
 	}
 }
+
+// TestExpensesCreate_BusinessPurposeFlag covers the --business-purpose flag:
+// businessPurpose is a valid flat top-level property on the live API
+// (confirmed in the same 34-property error that revealed expenseType/
+// paymentType/vendor's object shapes), distinct from --vendor (Vendor
+// Description is a separate Concur form field, confirmed live 2026-09-15).
+// Setting it at creation time avoids ever needing expenses apply-rules'
+// PATCH-based fill.
+func TestExpensesCreate_BusinessPurposeFlag(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("reading request body: %v", err)
+		}
+		if err := json.Unmarshal(raw, &capturedBody); err != nil {
+			t.Fatalf("unmarshaling request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"expenseId": "exp-1"}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("CONCUR_BASE_URL", server.URL)
+	t.Setenv("PRINTING_PRESS_VERIFY", "1")
+	t.Setenv("PRINTING_PRESS_VERIFY_LIVE_HTTP", "1")
+
+	cmd := RootCmd()
+	cmd.SetArgs([]string{
+		"expenses", "create",
+		"--user-id", "test-user-id",
+		"--report-id", "test-report-id",
+		"--type", "01000",
+		"--date", "2026-09-15",
+		"--amount", "50",
+		"--payment-type", "CASH",
+		"--vendor", "F45 Training Culver City",
+		"--business-purpose", "gym",
+		"--json",
+	})
+
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(os.Stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedBody["businessPurpose"] != "gym" {
+		t.Errorf("expected businessPurpose=\"gym\", got %+v", capturedBody["businessPurpose"])
+	}
+	// vendor (Vendor Description) and businessPurpose (Business Purpose)
+	// are distinct fields -- confirm --vendor didn't get overwritten or
+	// conflated with --business-purpose.
+	vendor, ok := capturedBody["vendor"].(map[string]any)
+	if !ok || vendor["name"] != "F45 Training Culver City" {
+		t.Errorf("expected vendor.name to remain distinct from businessPurpose, got %+v", capturedBody["vendor"])
+	}
+}

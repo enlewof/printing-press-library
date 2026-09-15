@@ -29,6 +29,7 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 	var bodyTransactionCurrencyCode string
 	var bodyPaymentTypeId string
 	var bodyVendorDescription string
+	var bodyBusinessPurpose string
 	var stdinBody bool
 
 	cmd := &cobra.Command{
@@ -140,24 +141,28 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 				if cmd.Flags().Changed("vendor") || bodyVendorDescription != "" {
 					bodyMap["vendor"] = map[string]any{"name": bodyVendorDescription}
 				}
+				// businessPurpose is a valid flat top-level property (confirmed live
+				// in the same 34-property error that revealed expenseType/paymentType/
+				// vendor's real object shapes) -- setting it at creation time avoids
+				// ever needing expenses apply-rules' PATCH-based fill, which hits this
+				// same file's confirmed-live 404 defect just like create itself did
+				// before the F2 fallback below.
+				if cmd.Flags().Changed("business-purpose") || bodyBusinessPurpose != "" {
+					bodyMap["businessPurpose"] = bodyBusinessPurpose
+				}
 			}
 			// PATCH(amend-2026-09-15: F2 fallback to browser automation on the
-			// confirmed-live expenses-create backend defect)
+			// confirmed-live expenses-create backend defect) — extracts from the
+			// constructed body map rather than the raw flag variables so the
+			// fallback works whether the body came from flags or --stdin (a
+			// --stdin caller's flag variables are always empty).
 			data, statusCode, err := c.PostWithParams(cmd.Context(), path, params, body)
 			if err != nil {
-				if isExpensesCreate404DefectError(err) && !flags.dryRun && !stdinBody {
-					vendorVal := bodyVendorDescription
-					if bm, ok := body.(map[string]any); ok {
-						if v, ok := bm["vendor"].(map[string]any); ok {
-							if n, ok := v["name"].(string); ok && n != "" {
-								vendorVal = n
-							}
-						}
-					}
+				if isExpensesCreate404DefectError(err) && !flags.dryRun {
+					typeCode, paymentTypeID, txDate, amt, vendor, purpose := extractExpenseFallbackParams(body)
 					data, statusCode, err = createExpenseViaBrowserFallback(
 						cmd, c, flags, flagUserId, flagContextType, flagReportId,
-						bodyExpenseTypeCode, bodyPaymentTypeId, bodyTransactionDate,
-						bodyTransactionAmount, vendorVal, "",
+						typeCode, paymentTypeID, txDate, amt, vendor, purpose,
 					)
 				}
 				if err != nil {
@@ -320,9 +325,66 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().StringVar(&bodyTransactionCurrencyCode, "currency", "USD", "Transaction currency code")
 	cmd.Flags().StringVar(&bodyPaymentTypeId, "payment-type", "", "Payment type ID (from 'payment-types list')")
 	cmd.Flags().StringVar(&bodyVendorDescription, "vendor", "", "Vendor/merchant name")
+	cmd.Flags().StringVar(&bodyBusinessPurpose, "business-purpose", "", "Business purpose for this expense (distinct from --vendor: Concur's real form has separate 'Vendor Description' and 'Business Purpose' fields, confirmed live 2026-09-15) -- setting this avoids needing expenses apply-rules' PATCH-based fill, which hits the same 404 defect create itself does")
 	cmd.Flags().BoolVar(&stdinBody, "stdin", false, "Read request body as JSON from stdin")
 
 	return cmd
+}
+
+// extractExpenseFallbackParams reads the fields the browser fallback needs
+// out of the already-constructed request body map, regardless of whether
+// that body came from --stdin (raw user JSON) or the flag-driven path
+// (this file's own object-shaped construction, per the F1 fix). Reading
+// from the body rather than the raw flag variables is what lets the
+// fallback work for BOTH input paths -- a --stdin caller's flag variables
+// are always empty, since stdin bypasses flag parsing entirely.
+//
+// Tolerates the body being something other than a map (e.g. --stdin JSON
+// that isn't an object) by simply returning zero values for every field it
+// can't find -- the fallback's own field-lookup timeouts already produce
+// clear errors when a required field ends up empty, so this does not need
+// to duplicate that validation.
+func extractExpenseFallbackParams(body any) (expenseTypeCode, paymentTypeId, transactionDate string, amount float64, vendor, businessPurpose string) {
+	bm, ok := body.(map[string]any)
+	if !ok {
+		return "", "", "", 0, "", ""
+	}
+	if et, ok := bm["expenseType"].(map[string]any); ok {
+		if code, ok := et["code"].(string); ok {
+			expenseTypeCode = code
+		}
+	}
+	if pt, ok := bm["paymentType"].(map[string]any); ok {
+		if id, ok := pt["id"].(string); ok {
+			paymentTypeId = id
+		}
+	}
+	if td, ok := bm["transactionDate"].(string); ok {
+		transactionDate = td
+	}
+	switch v := bm["transactionAmount"].(type) {
+	case float64:
+		amount = v
+	case json.Number:
+		amount, _ = v.Float64()
+	}
+	if vd, ok := bm["vendor"].(map[string]any); ok {
+		// Any one of id/description/name is valid per the live-confirmed
+		// Vendor schema (3 known properties) -- prefer name, since that's
+		// what this file's own flag-driven construction uses, but fall
+		// back to description or id for a --stdin caller that chose a
+		// different one.
+		for _, key := range []string{"name", "description", "id"} {
+			if s, ok := vd[key].(string); ok && s != "" {
+				vendor = s
+				break
+			}
+		}
+	}
+	if bp, ok := bm["businessPurpose"].(string); ok {
+		businessPurpose = bp
+	}
+	return expenseTypeCode, paymentTypeId, transactionDate, amount, vendor, businessPurpose
 }
 
 // isExpensesCreate404DefectError detects the exact live-confirmed signature
