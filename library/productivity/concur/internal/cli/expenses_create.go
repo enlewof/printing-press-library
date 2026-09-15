@@ -100,10 +100,18 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 				}
 				body = jsonBody
 			} else {
+				// PATCH(amend-2026-09-15: F1 correct expenses-create body shape) — the
+				// live API's NewReportExpense model rejects the flag names this branch
+				// used to send (expenseTypeCode/transactionCurrencyCode/paymentTypeId/
+				// vendorDescription) with HTTP 400 "Unrecognized field", listing 34
+				// actual known properties. expenseType, paymentType, and vendor are all
+				// objects (confirmed live: a flat string for any of the three fails with
+				// "Cannot construct instance of ... no String-argument constructor").
+				// transactionAmount/transactionDate were already correct as flat values.
 				bodyMap := map[string]any{}
 				body = bodyMap
 				if cmd.Flags().Changed("type") || bodyExpenseTypeCode != "" {
-					bodyMap["expenseTypeCode"] = bodyExpenseTypeCode
+					bodyMap["expenseType"] = map[string]any{"code": bodyExpenseTypeCode}
 				}
 				if cmd.Flags().Changed("date") || bodyTransactionDate != "" {
 					bodyMap["transactionDate"] = bodyTransactionDate
@@ -111,14 +119,19 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 				if cmd.Flags().Changed("amount") || bodyTransactionAmount != 0.0 {
 					bodyMap["transactionAmount"] = bodyTransactionAmount
 				}
-				if cmd.Flags().Changed("currency") || bodyTransactionCurrencyCode != "" {
-					bodyMap["transactionCurrencyCode"] = bodyTransactionCurrencyCode
+				// transactionCurrencyCode is not one of the API's 34 known top-level
+				// properties (confirmed live) and no working currency-override field
+				// was found in this session's investigation. Rather than guess at an
+				// unverified key, warn explicitly instead of silently no-op'ing a
+				// flag the user set.
+				if cmd.Flags().Changed("currency") && bodyTransactionCurrencyCode != "" && bodyTransactionCurrencyCode != "USD" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: --currency %q requested, but no working currency-override field was found live for this endpoint (the previously-sent \"transactionCurrencyCode\" key is rejected as unrecognized) -- the expense will be submitted without an explicit currency and will inherit the report/policy default; verify the resulting expense's currency in Concur after creation\n", bodyTransactionCurrencyCode)
 				}
 				if cmd.Flags().Changed("payment-type") || bodyPaymentTypeId != "" {
-					bodyMap["paymentTypeId"] = bodyPaymentTypeId
+					bodyMap["paymentType"] = map[string]any{"id": bodyPaymentTypeId}
 				}
 				if cmd.Flags().Changed("vendor") || bodyVendorDescription != "" {
-					bodyMap["vendorDescription"] = bodyVendorDescription
+					bodyMap["vendor"] = map[string]any{"name": bodyVendorDescription}
 				}
 			}
 			data, statusCode, err := c.PostWithParams(cmd.Context(), path, params, body)

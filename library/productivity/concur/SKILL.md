@@ -143,7 +143,7 @@ This CLI uses Chrome-compatible HTTP transport for browser-facing endpoints. It 
 **reports** — Expense report headers and lifecycle
 
 - `concur-pp-cli reports create` — Create a new expense report header (transparently falls back to browser-driven creation on tenants requiring policy selection)
-- `concur-pp-cli reports get` — Get a report's header, expenses, and web deep link
+- `concur-pp-cli reports get` — Get a report's header
 - `concur-pp-cli reports list` — List the current user's expense reports
 - `concur-pp-cli reports submit` — Submit a report for approval
 - `concur-pp-cli reports update` — Update a report's name or business purpose
@@ -191,6 +191,24 @@ concur-pp-cli hotels search --to "New York" --check-in 2026-10-12 --check-out 20
 Both create a live shopping session against your real tenant -- searches only, never books. `flights search` is a direct API call; `hotels search` drives a real browser (see HTTP Transport and Auth Setup) and is markedly slower.
 
 Scan the local SQLite cache for likely double-entered transactions across all your reports.
+
+### File a manual expense line item (e.g. a recurring personal-reimbursement stipend)
+
+```bash
+concur-pp-cli expenses create \
+  --report-id <report-id> --user-id <user-id> \
+  --type CELPH --date 2026-09-15 --amount 50 \
+  --payment-type CASH --vendor "on-call cell phone" \
+  --agent
+```
+
+`--type`/`--payment-type` take the `expenseTypeId`/`paymentTypeId` codes from `expense-types
+list`/`payment-types`, not display names. `--currency` only warns if set to something other than
+`USD` -- no working currency-override field is confirmed live for this endpoint; the expense
+inherits the report/policy default currency instead. If this command returns HTTP 404 despite a
+well-formed request, that is a known, confirmed-live Concur-backend behavior once a body is
+otherwise fully valid -- see the CLI's own error hint for that exact signature; there is no
+client-side workaround.
 
 ## Auth Setup
 

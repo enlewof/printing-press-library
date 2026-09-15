@@ -214,6 +214,22 @@ concur-pp-cli hotels search --to "New York" --check-in 2026-10-12 --check-out 20
 
 Both create a live shopping session against your real tenant -- searches only, never books. `flights search` is a direct API call; `hotels search` drives a real browser (see HTTP Transport and Authentication) and is markedly slower.
 
+### File a manual expense line item (e.g. a recurring personal-reimbursement stipend)
+
+```bash
+concur-pp-cli expenses create \
+  --report-id <report-id> --user-id <user-id> \
+  --type CELPH --date 2026-09-15 --amount 50 \
+  --payment-type CASH --vendor "on-call cell phone" \
+  --agent
+```
+
+`--type`/`--payment-type` take the `expenseTypeId`/`paymentTypeId` codes from `expense-types
+list`/`payment-types` (not display names). `--currency` only warns if set to something other
+than `USD` -- no working currency-override field has been confirmed live for this endpoint; the
+expense inherits the report/policy default currency instead. See Troubleshooting below if this
+command returns a 404 despite a well-formed request.
+
 ## Usage
 
 Run `concur-pp-cli --help` for the full command reference and flag list.
@@ -346,7 +362,7 @@ Receipt image/PDF attachment
 Expense report headers and lifecycle
 
 - **`concur-pp-cli reports create`** - Create a new expense report header
-- **`concur-pp-cli reports get`** - Get a report's header, expenses, and web deep link
+- **`concur-pp-cli reports get`** - Get a report's header
 - **`concur-pp-cli reports list`** - List the current user's expense reports
 - **`concur-pp-cli reports submit`** - Submit a report for approval
 - **`concur-pp-cli reports update`** - Update a report's name or business purpose
@@ -450,6 +466,7 @@ Static request headers can be configured under `headers`; per-command header ove
 - **every command wants --user-id and I don't want to retype my own GUID constantly** — This CLI has no built-in default-flag mechanism for --user-id yet ('profile save' only captures global output flags like --json, not per-command flags). Export it as a shell variable instead. First capture your ID: `USER_ID=$(concur-pp-cli account whoami --agent --select id --quiet)`. Then pass it on other commands: `--user-id "$USER_ID"`.
 - **commands fail with 401/403 against reports or expenses endpoints** — Your company's Concur tenant may route those calls through the OAuth2 partner API instead of the cookie-authenticated path this CLI uses by default. This CLI does not implement the OAuth2 partner flow; if your company IT has partner credentials, use the documented v3/v4 REST API directly (developer.concur.com) for that workflow instead.
 - **`hotels search` keeps opening its own Chrome window and asking me to log in, separately from `auth login --chrome`** — Expected: it drives a different, isolated browser instance and cannot share credentials with `auth login --chrome`'s source browser (copying cookies between them was tried and confirmed not to work -- see Authentication above). The login persists across later invocations until that session expires, so this is occasional, not per-search. To avoid it entirely, set up a dedicated debug-enabled Chrome profile once (see Authentication above); `hotels search` auto-detects and attaches to it instead of opening its own.
+- **`expenses create` fails with HTTP 404 "No static resource .../expenses" even though the request looks correct** — Confirmed live across ~15 real-request trials: this happens specifically once a request body passes every field-type check (i.e. it is otherwise well-formed) -- deliberately-invalid bodies get a clean HTTP 400 instead. This looks like a genuine Concur-backend defect (or a tenant/policy-specific server issue), not a client-side body-shape bug; there is no known workaround. Check the Concur web UI for the report in question before retrying -- the create may have partially succeeded despite the error -- to avoid a duplicate line item.
 
 ## HTTP Transport
 
