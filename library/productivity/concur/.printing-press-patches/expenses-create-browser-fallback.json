@@ -10,6 +10,8 @@
     "internal/cli/expenses_create.go",
     "internal/cli/expenses_create_test.go",
     "internal/cli/expenses_create_fallback_test.go",
+    "internal/cli/helpers.go",
+    "internal/cli/helpers_test.go",
     "README.md",
     "SKILL.md"
   ],
@@ -18,18 +20,43 @@
     "extractExpenseFallbackParams(body)",
     "createExpenseViaBrowserFallback(",
     "c.GetNoCache(ctx, path, nil)",
-    "cmd.Flags().StringVar(&bodyBusinessPurpose, \"business-purpose\""
+    "cmd.Flags().StringVar(&bodyBusinessPurpose, \"business-purpose\"",
+    "diffNewExpense(before, after, beforeIDs, amount, expenseTypeCode)",
+    "expenseAmountAndType(raw)",
+    "hasConcurAPIErr && concurAPIErr.StatusCode == 404 && concurAPIErr.Method == \"POST\""
   ],
-  "validated_outcome": "go build/vet clean; full go test ./... passes with zero regressions; 12 new tests (404-defect detection incl. a PATCH-path case, expense-list diffing incl. zero/multiple-new-expense error paths, partial-success error, --business-purpose flag setting the right field distinct from --vendor, extractExpenseFallbackParams covering both the flag-shaped and stdin-shaped body, and a full command-level test suite with a mocked agent-browser binary covering: the defect triggers the fallback for BOTH the flag-driven and --stdin paths (the latter via a real os.Stdin pipe redirect, since this command reads os.Stdin directly rather than through cobra's InOrStdin()), a non-matching 404 does not, and a successful HTTP create never touches the browser path). publish validate: same 2 pre-existing unrelated failures as the prior patch in this PR (phase5 fingerprint drift, verify-skill install-section drift); govulncheck/go vet/go build/--help/--version all clean.",
+  "validated_outcome": "go build/vet clean; full go test ./... passes with zero regressions; 20+ new tests across all revisions (404-defect detection incl. a PATCH-path case and a Method/Path-scoping matrix, expense-list diffing with amount+type correlation incl. a concurrent-misattribution scenario, partial-success error, --business-purpose flag, extractExpenseFallbackParams for both input shapes, currency/date/payment-type rejection paths verified to fire before any browser or API write, field-not-fillable abort verified to fire before the Save click, and a full command-level test suite with a mocked agent-browser binary). publish validate: same 2 pre-existing unrelated failures as the prior patch in this PR (phase5 fingerprint drift, verify-skill install-section drift); govulncheck/go vet/go build/--help/--version all clean.",
   "findings_addressed": ["F2"],
+  "review_fixes": [
+    {
+      "finding": "Currency Override Is Ignored (Greptile P1)",
+      "fix": "A non-USD --currency used to warn on stderr and still submit the POST in the report/policy default currency. Now rejected with a hard error before any write -- a JSON/agent caller has no way to detect a silent currency mismatch from a success response, so a loud failure is strictly safer than a quiet wrong-currency expense."
+    },
+    {
+      "finding": "404 Match Is Too Broad (Greptile P2)",
+      "fix": "classifyAPIError's expenses-create 404 signature used to match on the response path merely CONTAINING \"/expenses\", which also matches GET/PATCH on an individual expense (apply-rules' PATCH) or attendee routes. Now extracts the real *client.APIError and requires Method==\"POST\" plus an exact \"/expenses\" path suffix, so an unrelated 404 on a different route/method never gets the create-specific partial-success-flavored hint."
+    },
+    {
+      "finding": "Fallback Discards Requested Fields (Greptile P1)",
+      "fix": "A historical --date or non-Cash --payment-type used to only warn, then save with Concur's form defaults (today, Cash) anyway and report success. Both are now rejected before the browser even opens (both checks are static -- no browser state needed to know they'd be violated), instead of silently creating an expense with materially different data than requested."
+    },
+    {
+      "finding": "Concurrent Expense Misattribution (Greptile P1)",
+      "fix": "diffNewExpense used to treat ANY single expense ID absent from the earlier snapshot as the expense this call created. Shared manager/processor/proxy contexts mean another actor could add the only newly-visible expense while this call's Save was delayed or failed. Now filters candidates against the amount and expense-type code this call actually submitted (new expenseAmountAndType helper, tolerant of either a flat or nested response shape) before accepting a match; zero or multiple matching candidates still errors rather than guessing."
+    },
+    {
+      "finding": "Business Purpose Gets Dropped (Greptile P1)",
+      "fix": "Vendor Description and Business Purpose used to only warn if the field couldn't be found/filled, then save anyway -- the later expense-list diff only confirms SOME new expense appeared, not that the caller's requested field values landed. Both now abort BEFORE the irreversible Save click if the field can't be found or filled, applying the same fix to Vendor Description as Business Purpose for consistency (an identical latent bug Greptile didn't call out by name but the pattern was the same)."
+    }
+  ],
   "deferred_to_upstream": [
     {
       "feature": "expenses create: Transaction Date field targeting in the browser fallback",
-      "reason": "Confirmed live 2026-09-15 that the Transaction Date input has no stable accessible name (unlabeled, placeholder \"MM/DD/YYYY\" only) -- agent-browser's ref model is name/role based, so this field is left at Concur's own default (today) rather than targeted unreliably. A --date value other than today only warns. Superseding this requires either a more specific live-confirmed selector strategy for unlabeled fields, or an agent-browser capability for placeholder-based targeting."
+      "reason": "Confirmed live 2026-09-15 that the Transaction Date input has no stable accessible name (unlabeled, placeholder \"MM/DD/YYYY\" only) -- agent-browser's ref model is name/role based, so this field can't be targeted reliably. Per the review-fixes above, a --date other than today is now REJECTED rather than silently defaulted. Superseding this requires either a more specific live-confirmed selector strategy for unlabeled fields, or an agent-browser capability for placeholder-based targeting -- at which point --date could be honored instead of rejected."
     },
     {
       "feature": "expenses create: Payment Type change in the browser fallback",
-      "reason": "Concur's form defaults Payment Type to Cash, matching this CLI's own default, so the common case never needs to touch it. Changing it to a different value was not verified live in this session -- a non-Cash --payment-type only warns rather than attempting an unverified interaction."
+      "reason": "Concur's form defaults Payment Type to Cash, matching this CLI's own default, so the common case never needs to touch it. Changing it to a different value was not verified live in this session. Per the review-fixes above, a non-Cash --payment-type is now REJECTED rather than silently defaulted to Cash. Superseding this requires live-verifying the Payment Type dropdown interaction."
     },
     {
       "feature": "expenses create HTTP 404 on fully-valid bodies (the underlying Concur-backend defect itself)",

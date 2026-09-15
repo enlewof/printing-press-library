@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mvanhorn/printing-press-library/library/productivity/concur/internal/client"
 )
@@ -135,19 +136,22 @@ func TestExtractExpenseFallbackParams(t *testing.T) {
 
 // TestDiffNewExpense covers the before/after expense-list diff used to
 // identify what the browser fallback's Save Expense click created, since
-// the browser itself never surfaces a usable expense ID.
+// the browser itself never surfaces a usable expense ID. Every candidate
+// carries a nested transactionAmount/expenseType (the shape PR #1940's F2
+// finding confirmed live for this same response), so these also exercise
+// expenseAmountAndType's nested-shape branch, not just flat.
 func TestDiffNewExpense(t *testing.T) {
 	before := []json.RawMessage{
-		json.RawMessage(`{"expenseId":"exp-1"}`),
+		json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
 	}
 	beforeIDs := expenseIDSet(before)
 
-	t.Run("exactly one new expense is identified", func(t *testing.T) {
+	t.Run("exactly one new matching expense is identified", func(t *testing.T) {
 		after := []json.RawMessage{
-			json.RawMessage(`{"expenseId":"exp-1"}`),
-			json.RawMessage(`{"expenseId":"exp-2","transactionAmount":50}`),
+			json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
+			json.RawMessage(`{"expenseId":"exp-2","transactionAmount":{"value":50},"expenseType":{"code":"CELPH"}}`),
 		}
-		got, err := diffNewExpense(before, after, beforeIDs)
+		got, err := diffNewExpense(before, after, beforeIDs, 50, "CELPH")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -164,21 +168,100 @@ func TestDiffNewExpense(t *testing.T) {
 
 	t.Run("zero new expenses errors instead of guessing", func(t *testing.T) {
 		after := []json.RawMessage{
-			json.RawMessage(`{"expenseId":"exp-1"}`),
+			json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
 		}
-		if _, err := diffNewExpense(before, after, beforeIDs); err == nil {
+		if _, err := diffNewExpense(before, after, beforeIDs, 50, "CELPH"); err == nil {
 			t.Error("expected an error when no new expense appeared, got nil")
 		}
 	})
 
-	t.Run("multiple new expenses errors instead of guessing which one", func(t *testing.T) {
+	// Covers the Greptile review finding "Concurrent Expense
+	// Misattribution": a second actor (shared manager/processor/proxy
+	// context) adds an unrelated expense concurrently with this call's own
+	// Save. Both are "new" by ID, but only one matches what THIS call
+	// submitted -- the other actor's expense must never be misattributed
+	// as this call's own.
+	t.Run("concurrent unrelated new expense is not misattributed", func(t *testing.T) {
 		after := []json.RawMessage{
-			json.RawMessage(`{"expenseId":"exp-1"}`),
-			json.RawMessage(`{"expenseId":"exp-2"}`),
-			json.RawMessage(`{"expenseId":"exp-3"}`),
+			json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
+			json.RawMessage(`{"expenseId":"exp-other-actor","transactionAmount":{"value":9999},"expenseType":{"code":"AIRFR"}}`),
+			json.RawMessage(`{"expenseId":"exp-2","transactionAmount":{"value":50},"expenseType":{"code":"CELPH"}}`),
 		}
-		if _, err := diffNewExpense(before, after, beforeIDs); err == nil {
-			t.Error("expected an error when multiple new expenses appeared, got nil")
+		got, err := diffNewExpense(before, after, beforeIDs, 50, "CELPH")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var parsed struct {
+			ExpenseID string `json:"expenseId"`
+		}
+		if err := json.Unmarshal(got, &parsed); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		if parsed.ExpenseID != "exp-2" {
+			t.Errorf("got expense %q, want exp-2 (not the concurrent unrelated expense)", parsed.ExpenseID)
+		}
+	})
+
+	// When NEITHER new expense matches what was submitted, this must
+	// error rather than pick one -- e.g. this call's own Save silently
+	// failed while an unrelated concurrent expense happened to appear.
+	t.Run("no matching candidate errors instead of guessing", func(t *testing.T) {
+		after := []json.RawMessage{
+			json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
+			json.RawMessage(`{"expenseId":"exp-other-actor","transactionAmount":{"value":9999},"expenseType":{"code":"AIRFR"}}`),
+		}
+		if _, err := diffNewExpense(before, after, beforeIDs, 50, "CELPH"); err == nil {
+			t.Error("expected an error when no new expense matches the submitted amount/type, got nil")
+		}
+	})
+
+	t.Run("multiple matching new expenses errors instead of guessing which one", func(t *testing.T) {
+		after := []json.RawMessage{
+			json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
+			json.RawMessage(`{"expenseId":"exp-2","transactionAmount":{"value":50},"expenseType":{"code":"CELPH"}}`),
+			json.RawMessage(`{"expenseId":"exp-3","transactionAmount":{"value":50},"expenseType":{"code":"CELPH"}}`),
+		}
+		if _, err := diffNewExpense(before, after, beforeIDs, 50, "CELPH"); err == nil {
+			t.Error("expected an error when multiple matching new expenses appeared, got nil")
+		}
+	})
+
+	t.Run("candidate missing comparable fields is excluded, not auto-matched", func(t *testing.T) {
+		after := []json.RawMessage{
+			json.RawMessage(`{"expenseId":"exp-1","transactionAmount":{"value":10},"expenseType":{"code":"OTHER"}}`),
+			json.RawMessage(`{"expenseId":"exp-2"}`), // no transactionAmount/expenseType at all
+		}
+		if _, err := diffNewExpense(before, after, beforeIDs, 50, "CELPH"); err == nil {
+			t.Error("expected an error -- a candidate missing comparable fields must not be treated as an automatic match")
+		}
+	})
+}
+
+// TestExpenseAmountAndType covers both response shapes this session
+// found evidence for: a flat number/string (used in earlier ad hoc mock
+// bodies in this file) and the nested {"value":...}/{"code":...} shape PR
+// #1940's F2 finding confirmed live for this same response. Defensive
+// tolerance of either shape matters because this session did not
+// independently re-verify these two specific fields' live shape.
+func TestExpenseAmountAndType(t *testing.T) {
+	t.Run("flat shape", func(t *testing.T) {
+		amount, hasAmount, typeCode, hasType := expenseAmountAndType(json.RawMessage(`{"transactionAmount":50,"expenseType":"CELPH"}`))
+		if !hasAmount || amount != 50 || !hasType || typeCode != "CELPH" {
+			t.Errorf("got (%v, %v, %q, %v)", amount, hasAmount, typeCode, hasType)
+		}
+	})
+
+	t.Run("nested shape", func(t *testing.T) {
+		amount, hasAmount, typeCode, hasType := expenseAmountAndType(json.RawMessage(`{"transactionAmount":{"value":50,"currencyCode":"USD"},"expenseType":{"code":"CELPH","name":"Mobile/Cellular Phone"}}`))
+		if !hasAmount || amount != 50 || !hasType || typeCode != "CELPH" {
+			t.Errorf("got (%v, %v, %q, %v)", amount, hasAmount, typeCode, hasType)
+		}
+	})
+
+	t.Run("missing fields report false, not zero-value false positives", func(t *testing.T) {
+		_, hasAmount, _, hasType := expenseAmountAndType(json.RawMessage(`{}`))
+		if hasAmount || hasType {
+			t.Errorf("expected both hasAmount and hasType false for an empty object, got hasAmount=%v hasType=%v", hasAmount, hasType)
 		}
 	})
 }
@@ -225,7 +308,7 @@ if [ "$arg1" = "get" ] && [ "$arg2" = "url" ]; then
 fi
 
 if [ "$arg1" = "snapshot" ]; then
-	echo '{"success":true,"data":{"origin":"https://us2.concursolutions.com","refs":{"e1":{"name":"Amount","role":"textbox"},"e2":{"name":"Vendor Description","role":"textbox"},"e3":{"name":"Save Expense","role":"button"}}}}'
+	echo '{"success":true,"data":{"origin":"https://us2.concursolutions.com","refs":{"e1":{"name":"Amount","role":"textbox"},"e2":{"name":"Vendor Description","role":"textbox"},"e3":{"name":"Save Expense","role":"button"},"e4":{"name":"Business Purpose","role":"textbox"}}}}'
 	exit 0
 fi
 
@@ -260,7 +343,7 @@ exit 0
 				if _, err := os.Stat(stateFile); err == nil {
 					// After the mocked Save Expense click: one new expense.
 					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`[{"expenseId":"exp-new-1","transactionAmount":50}]`))
+					_, _ = w.Write([]byte(`[{"expenseId":"exp-new-1","transactionAmount":{"value":50},"expenseType":{"code":"CELPH"}}]`))
 				} else {
 					// Before the browser fallback: empty report.
 					w.WriteHeader(http.StatusOK)
@@ -385,7 +468,7 @@ exit 0
 			case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/expenses"):
 				if _, err := os.Stat(stateFile); err == nil {
 					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`[{"expenseId":"exp-new-stdin-1","transactionAmount":50}]`))
+					_, _ = w.Write([]byte(`[{"expenseId":"exp-new-stdin-1","transactionAmount":{"value":50},"expenseType":{"code":"01000"}}]`))
 				} else {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`[]`))
@@ -488,4 +571,185 @@ exit 0
 			t.Error("expected browser fallback NOT to be driven, but state file exists")
 		}
 	})
+}
+
+// TestExpensesCreate_BrowserFallback_RejectsUnhonorableFields covers the
+// Greptile review finding "Fallback Discards Requested Fields": a
+// historical --date or non-Cash --payment-type used to only warn, then
+// save with Concur's form defaults (today, Cash) anyway and report
+// success -- creating an expense whose required date or requested payment
+// type silently didn't match what was asked for. Both are now rejected
+// BEFORE the browser is even opened (both checks are static), verified
+// here by asserting zero agent-browser invocations occurred.
+func TestExpensesCreate_BrowserFallback_RejectsUnhonorableFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockBinPath := filepath.Join(tmpDir, "agent-browser")
+	callLog := filepath.Join(tmpDir, "calls.log")
+
+	// Any invocation at all is a failure for this test -- these checks
+	// must reject before ever shelling out to agent-browser.
+	mockScript := "#!/bin/bash\necho \"$@\" >> " + callLog + "\necho '{\"success\":false}'\nexit 0\n"
+	if err := os.WriteFile(mockBinPath, []byte(mockScript), 0o755); err != nil {
+		t.Fatalf("writing mock binary: %v", err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+string(filepath.ListSeparator)+oldPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "POST" && strings.Contains(r.URL.Path, "/expenses") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"errorMessage":"No static resource /expensereports/v4/users/test-user-id/context/TRAVELER/reports/mock-report/expenses."}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("CONCUR_BASE_URL", server.URL)
+	t.Setenv("CONCUR_UI_BASE_URL", "https://us2.concursolutions.com")
+	t.Setenv("PRINTING_PRESS_VERIFY", "1")
+	t.Setenv("PRINTING_PRESS_VERIFY_LIVE_HTTP", "1")
+
+	tests := []struct {
+		name       string
+		extraArgs  []string
+		wantErrSub string
+	}{
+		{
+			name:       "historical date is rejected",
+			extraArgs:  []string{"--date", "2020-01-01"},
+			wantErrSub: "cannot honor --date",
+		},
+		{
+			name:       "non-Cash payment type is rejected",
+			extraArgs:  []string{"--date", time.Now().Format("2006-01-02"), "--payment-type", "COMP"},
+			wantErrSub: "cannot honor --payment-type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.Remove(callLog)
+
+			args := []string{
+				"expenses", "create",
+				"--user-id", "test-user-id",
+				"--report-id", "mock-report",
+				"--type", "CELPH",
+				"--amount", "50",
+				"--json",
+			}
+			args = append(args, tt.extraArgs...)
+
+			cmd := RootCmd()
+			cmd.SetArgs(args)
+
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(io.Discard)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected an error rejecting the unhonorable field, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Errorf("expected error containing %q, got: %v", tt.wantErrSub, err)
+			}
+			if _, statErr := os.Stat(callLog); !os.IsNotExist(statErr) {
+				t.Error("expected zero agent-browser invocations (rejected before opening the browser), but the mock was called")
+			}
+		})
+	}
+}
+
+// TestExpensesCreate_BrowserFallback_AbortsWhenFieldNotFillable covers the
+// Greptile review finding "Business Purpose Gets Dropped" (and the
+// identical latent bug in Vendor Description, fixed for consistency): if
+// the browser fallback can't find a field the caller explicitly requested,
+// it must abort BEFORE the irreversible Save Expense click, not warn and
+// save without it. Uses a mock snapshot missing the Business Purpose ref
+// entirely (unlike the shared mock in TestExpensesCreate_BrowserFallback,
+// which includes it) to force the not-found path deterministically.
+func TestExpensesCreate_BrowserFallback_AbortsWhenFieldNotFillable(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockBinPath := filepath.Join(tmpDir, "agent-browser")
+	saveClickedFile := filepath.Join(tmpDir, "save_clicked")
+
+	mockScript := `#!/bin/bash
+arg1="$1"
+arg2="$2"
+
+if [ "$arg1" = "--cdp" ]; then
+	echo '{"success": false}'
+	exit 0
+fi
+
+if [ "$arg1" = "get" ] && [ "$arg2" = "url" ]; then
+	echo "https://us2.concursolutions.com/nui/expense/reports/mock-report/expenses/new?expenseTypeId=CELPH"
+	exit 0
+fi
+
+if [ "$arg1" = "snapshot" ]; then
+	echo '{"success":true,"data":{"origin":"https://us2.concursolutions.com","refs":{"e1":{"name":"Amount","role":"textbox"},"e2":{"name":"Save Expense","role":"button"}}}}'
+	exit 0
+fi
+
+if [ "$arg1" = "click" ] && [ "$arg2" = "@e2" ]; then
+	touch "` + saveClickedFile + `"
+	exit 0
+fi
+
+exit 0
+`
+	if err := os.WriteFile(mockBinPath, []byte(mockScript), 0o755); err != nil {
+		t.Fatalf("writing mock binary: %v", err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmpDir+string(filepath.ListSeparator)+oldPath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "POST" && strings.Contains(r.URL.Path, "/expenses") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"errorMessage":"No static resource /expensereports/v4/users/test-user-id/context/TRAVELER/reports/mock-report/expenses."}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	t.Setenv("CONCUR_BASE_URL", server.URL)
+	t.Setenv("CONCUR_UI_BASE_URL", "https://us2.concursolutions.com")
+	t.Setenv("PRINTING_PRESS_VERIFY", "1")
+	t.Setenv("PRINTING_PRESS_VERIFY_LIVE_HTTP", "1")
+
+	cmd := RootCmd()
+	cmd.SetArgs([]string{
+		"expenses", "create",
+		"--user-id", "test-user-id",
+		"--report-id", "mock-report",
+		"--type", "CELPH",
+		"--date", time.Now().Format("2006-01-02"),
+		"--amount", "50",
+		"--business-purpose", "gym",
+		"--json",
+	})
+
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when the Business Purpose field cannot be found, got nil")
+	}
+	if !strings.Contains(err.Error(), "Business Purpose") {
+		t.Errorf("expected error naming the unfillable field, got: %v", err)
+	}
+	if _, statErr := os.Stat(saveClickedFile); !os.IsNotExist(statErr) {
+		t.Error("expected Save Expense to NEVER be clicked when a requested field can't be filled, but it was")
+	}
 }

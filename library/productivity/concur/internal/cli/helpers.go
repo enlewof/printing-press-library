@@ -610,6 +610,23 @@ func classifyAPIError(err error, flags *rootFlags) error {
 		return err
 	}
 
+	// PATCH(amend-2026-09-15: scope the expenses-create 404 signature to the
+	// exact route it was confirmed on) -- Greptile review flagged the
+	// original substring-only match (msg contains "/expenses") as too
+	// broad: GET, PATCH, and attendee routes also contain "/expenses" in
+	// their path and pass failures through this same classifier. If one of
+	// those returns Spring's identical "No static resource" 404 for an
+	// unrelated reason, the substring match would wrongly claim a valid
+	// POST may have partially succeeded and give create-specific
+	// duplicate-avoidance guidance for what was actually a read or update
+	// failure. Extracting the real *client.APIError lets the check match
+	// on Method=="POST" and an exact "/expenses" path suffix (the
+	// collection endpoint create posts to) rather than any path merely
+	// containing that substring -- ".../expenses/{id}" (an individual
+	// expense, e.g. apply-rules' PATCH) does not match.
+	var concurAPIErr *client.APIError
+	hasConcurAPIErr := errors.As(err, &concurAPIErr)
+
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "HTTP 409"):
@@ -642,8 +659,12 @@ func classifyAPIError(err error, flags *rootFlags) error {
 	// reliably get a clean 400 instead. This isolates to request-completeness, not a bad
 	// report ID or malformed request, so the generic "run the list command" hint below is
 	// actively misleading here -- there is no list-equivalent that helps a blocked POST.
-	// Must be checked before the generic HTTP 404 case since both match "HTTP 404".
-	case strings.Contains(msg, "HTTP 404") && strings.Contains(msg, "No static resource") && strings.Contains(msg, "/expenses"):
+	// Must be checked before the generic HTTP 404 case since both match "HTTP 404". Scoped
+	// to Method=="POST" + an exact "/expenses" path suffix (see comment above) so a GET,
+	// PATCH, or attendee route hitting an unrelated "No static resource" 404 never gets
+	// this create-specific, partial-success-flavored hint.
+	case hasConcurAPIErr && concurAPIErr.StatusCode == 404 && concurAPIErr.Method == "POST" &&
+		strings.HasSuffix(concurAPIErr.Path, "/expenses") && strings.Contains(concurAPIErr.Body, "No static resource"):
 		return notFoundErr(fmt.Errorf("%w\nhint: this exact shape (HTTP 404 \"No static resource\" on a POST whose path includes /expenses) has been observed live on requests that pass every client-side validation check -- i.e. this looks like a Concur-backend defect triggered once the expense body is complete and valid, not a wrong report ID or a malformed request. Deliberately-invalid requests to this same endpoint correctly return a clean HTTP 400 instead, which rules out a client-side body-shape problem. There is no known client-side fix. Check the Concur web UI for the report in question -- the create may have partially succeeded despite this error -- before retrying, to avoid a duplicate line item.", err))
 	case strings.Contains(msg, "HTTP 404"):
 		return notFoundErr(fmt.Errorf("%w\nhint: resource not found. Run the 'list' command to see available items", err))

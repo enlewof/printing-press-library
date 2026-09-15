@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -109,21 +110,17 @@ func TestExpensesCreate_FlagBodyUsesLiveConfirmedShape(t *testing.T) {
 	}
 }
 
-// TestExpensesCreate_NonUSDCurrencyWarns covers F1's currency gap: no working
-// currency-override field was found live, so rather than silently sending a
-// confirmed-wrong key (transactionCurrencyCode) or silently dropping the
-// user's flag, a non-USD --currency must produce an explicit stderr warning
-// and the body must carry no currency-related key at all.
-func TestExpensesCreate_NonUSDCurrencyWarns(t *testing.T) {
-	var capturedBody map[string]any
+// TestExpensesCreate_NonUSDCurrencyRejected covers F1's currency gap: no
+// working currency-override field was found live. Per Greptile review
+// ("Currency Override Is Ignored"), a non-USD --currency must be REJECTED
+// before any write is attempted, not warned-about-then-silently-submitted
+// in USD/the report default -- a caller relying on the requested currency
+// has no way to detect a silent mismatch from a JSON/agent success
+// response, since the old warning was stderr-only.
+func TestExpensesCreate_NonUSDCurrencyRejected(t *testing.T) {
+	apiCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("reading request body: %v", err)
-		}
-		if err := json.Unmarshal(raw, &capturedBody); err != nil {
-			t.Fatalf("unmarshaling request body: %v", err)
-		}
+		apiCalls++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"expenseId": "exp-1"}`))
@@ -152,18 +149,15 @@ func TestExpensesCreate_NonUSDCurrencyWarns(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
 
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error rejecting the unsupported --currency, got nil")
 	}
-
-	if !bytes.Contains(errOut.Bytes(), []byte("no working currency-override field")) {
-		t.Errorf("expected a stderr warning about the currency gap, got stderr: %s", errOut.String())
+	if !strings.Contains(err.Error(), "cannot be applied") {
+		t.Errorf("expected an error explaining the currency override can't be applied, got: %v", err)
 	}
-
-	for _, key := range []string{"transactionCurrencyCode", "currency", "currencyCode"} {
-		if _, present := capturedBody[key]; present {
-			t.Errorf("expected no currency-related key in the body when no working field is known, found %q in: %+v", key, capturedBody)
-		}
+	if apiCalls != 0 {
+		t.Errorf("expected the write to be rejected before any API call, got %d calls", apiCalls)
 	}
 }
 
