@@ -143,6 +143,12 @@ On Concur tenants where custom policies are required, creating a report via pure
 
 The fallback derives which Concur web UI host to open from your configured API base URL, but only when that URL is actually a `concursolutions.com` host -- it will never silently guess a region. If you're on a supported proxy or custom endpoint where that derivation can't work, set `CONCUR_UI_BASE_URL` to the correct region's UI host explicitly (e.g. `https://us2.concursolutions.com`); without a derivable host or this override, the command fails with a clear error rather than risking the wrong tenant/region. If the click succeeds in Concur but a later step fails, the error will say so explicitly (with the report ID, when known) instead of looking like an ordinary, safely-retryable failure -- re-running `reports create` blindly at that point risks creating a duplicate report, so check `reports get <id>` or `reports list` first.
 
+### Browser-automation fallback for expense creation
+
+Confirmed live: once an `expenses create` request body passes every client-side validation check, the API returns a generic HTTP 404 ("No static resource") instead of 201 -- this looks like a genuine Concur-backend defect, not a client-side bug, since deliberately-invalid bodies correctly get a clean 400 instead. `expenses create` has the same kind of transparent browser-automation fallback as `reports create`: on that exact 404 signature, it drives Concur's real "New Expense" form (same `agent-browser` CDP-attach-or-isolated-login mechanism as `hotels search` and the `reports create` fallback above) instead of failing outright.
+
+Because the browser never surfaces a usable expense ID, success is confirmed by diffing the report's expense list before and after the form's Save click -- so this fallback needs one read that pure-HTTP creation didn't: `GET .../reports/{id}/expenses`, which is unaffected by the defect. The Transaction Date field defaults to today in Concur's form (a `--date` other than today only warns, since that field has no stable accessible name to target reliably); Payment Type defaults to Cash, matching this CLI's own default (a non-Cash `--payment-type` only warns too, since changing it away from the default was not verified live). Like the `reports create` fallback, a failure after the irreversible Save click is reported as a possible partial success, not an ordinary retryable error.
+
 ## Quick Start
 
 ```bash
@@ -167,8 +173,9 @@ concur-pp-cli reports create --name "October Travel" --purpose "Client site visi
 
 These capabilities aren't available in any other tool for this API.
 
-### Conditional browser fallback for report creation
+### Conditional browser fallback for report and expense creation
 - **`reports create`** — Automatically and transparently retries report creation via automated browser when the Concur v4 API rejects pure HTTP requests with a `policyId is required` error. This fallback is completely conditional and only triggers for tenants requiring explicit policy assignment.
+- **`expenses create`** — Automatically and transparently retries expense creation via automated browser when the API returns its confirmed-live 404 defect on an otherwise fully-valid request. Success is confirmed by diffing the report's expense list rather than trusting a browser-surfaced ID, since the browser gives none.
 
 ### Local state that compounds
 - **`expenses scan-duplicates`** — Find potential double-entered charges across all of your synced expenses.
@@ -227,8 +234,9 @@ concur-pp-cli expenses create \
 `--type`/`--payment-type` take the `expenseTypeId`/`paymentTypeId` codes from `expense-types
 list`/`payment-types` (not display names). `--currency` only warns if set to something other
 than `USD` -- no working currency-override field has been confirmed live for this endpoint; the
-expense inherits the report/policy default currency instead. See Troubleshooting below if this
-command returns a 404 despite a well-formed request.
+expense inherits the report/policy default currency instead. If the API's confirmed-live 404
+defect fires on this request, it now falls back to browser automation automatically instead of
+just failing -- see "Browser-automation fallback for expense creation" under Authentication.
 
 ## Usage
 
@@ -466,7 +474,7 @@ Static request headers can be configured under `headers`; per-command header ove
 - **every command wants --user-id and I don't want to retype my own GUID constantly** — This CLI has no built-in default-flag mechanism for --user-id yet ('profile save' only captures global output flags like --json, not per-command flags). Export it as a shell variable instead. First capture your ID: `USER_ID=$(concur-pp-cli account whoami --agent --select id --quiet)`. Then pass it on other commands: `--user-id "$USER_ID"`.
 - **commands fail with 401/403 against reports or expenses endpoints** — Your company's Concur tenant may route those calls through the OAuth2 partner API instead of the cookie-authenticated path this CLI uses by default. This CLI does not implement the OAuth2 partner flow; if your company IT has partner credentials, use the documented v3/v4 REST API directly (developer.concur.com) for that workflow instead.
 - **`hotels search` keeps opening its own Chrome window and asking me to log in, separately from `auth login --chrome`** — Expected: it drives a different, isolated browser instance and cannot share credentials with `auth login --chrome`'s source browser (copying cookies between them was tried and confirmed not to work -- see Authentication above). The login persists across later invocations until that session expires, so this is occasional, not per-search. To avoid it entirely, set up a dedicated debug-enabled Chrome profile once (see Authentication above); `hotels search` auto-detects and attaches to it instead of opening its own.
-- **`expenses create` fails with HTTP 404 "No static resource .../expenses" even though the request looks correct** — Confirmed live across ~15 real-request trials: this happens specifically once a request body passes every field-type check (i.e. it is otherwise well-formed) -- deliberately-invalid bodies get a clean HTTP 400 instead. This looks like a genuine Concur-backend defect (or a tenant/policy-specific server issue), not a client-side body-shape bug; there is no known workaround. Check the Concur web UI for the report in question before retrying -- the create may have partially succeeded despite the error -- to avoid a duplicate line item.
+- **`expenses create` fails with HTTP 404 "No static resource .../expenses" even though the request looks correct** — Confirmed live across ~15 real-request trials: this happens specifically once a request body passes every field-type check (i.e. it is otherwise well-formed) -- deliberately-invalid bodies get a clean HTTP 400 instead. This looks like a genuine Concur-backend defect (or a tenant/policy-specific server issue), not a client-side body-shape bug. As of this version, `expenses create` falls back to browser automation on this exact signature automatically (see "Browser-automation fallback for expense creation" under Authentication) -- if you're seeing the raw 404 instead of a fallback attempt, check that `agent-browser` is installed (`npm install -g agent-browser && agent-browser install`). If the fallback itself fails partway through, the error says so explicitly and will not look like an ordinary retryable failure -- check the Concur web UI for the report in question before retrying by hand, to avoid a duplicate line item.
 
 ## HTTP Transport
 

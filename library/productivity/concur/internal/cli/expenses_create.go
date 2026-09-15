@@ -4,11 +4,18 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/mvanhorn/printing-press-library/library/productivity/concur/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -134,9 +141,28 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 					bodyMap["vendor"] = map[string]any{"name": bodyVendorDescription}
 				}
 			}
+			// PATCH(amend-2026-09-15: F2 fallback to browser automation on the
+			// confirmed-live expenses-create backend defect)
 			data, statusCode, err := c.PostWithParams(cmd.Context(), path, params, body)
 			if err != nil {
-				return classifyAPIError(err, flags)
+				if isExpensesCreate404DefectError(err) && !flags.dryRun && !stdinBody {
+					vendorVal := bodyVendorDescription
+					if bm, ok := body.(map[string]any); ok {
+						if v, ok := bm["vendor"].(map[string]any); ok {
+							if n, ok := v["name"].(string); ok && n != "" {
+								vendorVal = n
+							}
+						}
+					}
+					data, statusCode, err = createExpenseViaBrowserFallback(
+						cmd, c, flags, flagUserId, flagContextType, flagReportId,
+						bodyExpenseTypeCode, bodyPaymentTypeId, bodyTransactionDate,
+						bodyTransactionAmount, vendorVal, "",
+					)
+				}
+				if err != nil {
+					return classifyAPIError(err, flags)
+				}
 			}
 			// Inspect the mutate response body for a partial-failure-shaped
 			// field (e.g. Google Ads `partialFailureError`). Several Google
@@ -298,3 +324,272 @@ func newExpensesCreateCmd(flags *rootFlags) *cobra.Command {
 
 	return cmd
 }
+
+// isExpensesCreate404DefectError detects the exact live-confirmed signature
+// documented in classifyAPIError's matching hint (helpers.go): HTTP 404,
+// "No static resource", and a path containing "/expenses" all present
+// together. Reproduced live across ~15 request permutations, isolating to
+// request-completeness rather than any specific field -- deliberately
+// invalid bodies get a clean 400 instead. This is the trigger condition for
+// falling back to browser automation, mirroring isPolicyIdRequiredError's
+// role in reports_create.go for that command's own confirmed-live defect.
+func isExpensesCreate404DefectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 404 {
+		return strings.Contains(apiErr.Body, "No static resource") && strings.Contains(apiErr.Body, "/expenses")
+	}
+	return false
+}
+
+// createExpenseViaBrowserFallback drives Concur's real "New Expense" form
+// via agent-browser when the direct HTTP POST hits the confirmed-live
+// backend defect (see isExpensesCreate404DefectError and classifyAPIError's
+// matching hint): once a request body passes every client-side validation
+// check, this endpoint 404s instead of persisting. Reads on the same
+// report/expenses path are unaffected (confirmed live -- this is what PR
+// #1940's F1 fix already relies on for expenses apply-rules), which is what
+// makes the before/after expense-list diff below a reliable way to identify
+// the expense this creates without needing to extract an ID from the
+// browser itself.
+//
+// The direct new-expense URL
+// (https://<host>/nui/expense/reports/<report_id>/expenses/new?expenseTypeId=<code>)
+// and the "Amount"/"Vendor Description"/"Business Purpose"/"Save Expense"
+// field names below were confirmed live 2026-09-15 by navigating the real
+// form and reading its accessible structure. The Transaction Date field has
+// no stable accessible name (confirmed: an unlabeled input, placeholder
+// "MM/DD/YYYY" only) -- rather than target it by placeholder text (fragile,
+// and agent-browser's ref model is name/role based), this fallback leaves
+// it at Concur's own default (today), which matches this CLI's most common
+// use case (filing a stipend dated today), and warns when the caller asked
+// for a different date. Likewise, Payment Type defaults to Cash in
+// Concur's form, matching this CLI's own default; changing it away from
+// that default was not verified live, so a non-Cash request only warns.
+func createExpenseViaBrowserFallback(cmd *cobra.Command, c *client.Client, flags *rootFlags, userId, contextType, reportId, expenseTypeCode, paymentTypeId, transactionDate string, amount float64, vendor, businessPurpose string) (json.RawMessage, int, error) {
+	const stepTimeout = 10 * time.Second
+
+	host, err := resolveReportsUIHost(c.RequestBaseURL())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	before, err := fetchReportExpenses(cmd.Context(), c, userId, contextType, reportId)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetching expense list before browser fallback: %w", err)
+	}
+	beforeIDs := expenseIDSet(before)
+
+	newExpenseURL := fmt.Sprintf(
+		"https://%s/nui/expense/reports/%s/expenses/new?expenseTypeId=%s",
+		host, url.PathEscape(reportId), url.QueryEscape(expenseTypeCode),
+	)
+
+	fmt.Fprintf(cmd.ErrOrStderr(), "HTTP API returned the confirmed expenses-create backend defect (see 'concur-pp-cli expenses create --help' known-issue note). Falling back to browser automation...\n")
+
+	if port := refreshActiveCDPPort(); port != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Using dedicated Concur browser on CDP port %s (no separate login needed)\n", port)
+	}
+
+	if _, err := runAgentBrowser("open", newExpenseURL); err != nil {
+		return nil, 0, err
+	}
+	time.Sleep(1500 * time.Millisecond)
+
+	refs, err := agentBrowserSnapshotRefs()
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, ok := findRef(refs, "sign in", ""); ok {
+		if activeCDPPort != "" {
+			return nil, 0, fmt.Errorf("the dedicated Concur browser on CDP port %s is no longer logged in -- log in to concursolutions.com in that window again, then re-run this command", activeCDPPort)
+		}
+		return nil, 0, fmt.Errorf("not logged in to Concur in the automated browser -- log in manually in the opened Chrome window, then re-run this command (or set up a dedicated debug-enabled Chrome profile to skip this every time; see --help)")
+	}
+
+	// Mirror reports_create.go's interstitial-dismiss step -- the same
+	// one-time-per-session promotional dialog can render on any Concur
+	// page load, not just the Create Report dialog.
+	if ref, ok := findRef(refs, "close", "button"); ok {
+		_, _ = runAgentBrowser("click", "@"+ref)
+		time.Sleep(300 * time.Millisecond)
+		if refs2, err := agentBrowserSnapshotRefs(); err == nil {
+			if _, stillOpen := findRef(refs2, "close", "button"); stillOpen {
+				_, _ = runAgentBrowser("press", "Escape")
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+	}
+
+	amountRef, err := waitForRef("Amount", "textbox", stepTimeout)
+	if err != nil {
+		return nil, 0, fmt.Errorf("could not find the Amount field -- expense type code %q may not be valid, or Concur's form structure has changed: %w", expenseTypeCode, err)
+	}
+	if _, err := runAgentBrowser("fill", "@"+amountRef, strconv.FormatFloat(amount, 'f', 2, 64)); err != nil {
+		return nil, 0, err
+	}
+
+	if vendor != "" {
+		vendorRef, err := waitForRef("Vendor Description", "textbox", 3*time.Second)
+		if err == nil {
+			if _, err := runAgentBrowser("fill", "@"+vendorRef, vendor); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not fill Vendor Description field: %v\n", err)
+			}
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: Vendor Description textbox not found, skipping: %v\n", err)
+		}
+	}
+
+	if businessPurpose != "" {
+		purposeRef, err := waitForRef("Business Purpose", "textbox", 3*time.Second)
+		if err == nil {
+			if _, err := runAgentBrowser("fill", "@"+purposeRef, businessPurpose); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not fill Business Purpose field: %v\n", err)
+			}
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: Business Purpose textbox not found, skipping: %v\n", err)
+		}
+	}
+
+	if transactionDate != "" && transactionDate != time.Now().Format("2006-01-02") {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: --date %s requested, but the browser fallback's Transaction Date field has no stable accessible name to target reliably (confirmed live: unlabeled input) -- the expense will use Concur's default (today) instead; verify and correct the date in Concur after creation if this matters\n", transactionDate)
+	}
+
+	if paymentTypeId != "" && !strings.EqualFold(paymentTypeId, "CASH") {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: --payment-type %s requested, but changing the browser fallback's Payment Type away from Concur's form default (Cash) was not verified live -- verify the payment type in Concur after creation\n", paymentTypeId)
+	}
+
+	saveRef, err := waitForRef("Save Expense", "button", stepTimeout)
+	if err != nil {
+		return nil, 0, fmt.Errorf("could not find the Save Expense button: %w", err)
+	}
+	if _, err := runAgentBrowser("click", "@"+saveRef); err != nil {
+		return nil, 0, err
+	}
+
+	// PATCH(amend-2026-09-15: surface partial success instead of a plain
+	// error) -- mirrors reportsCreatePartialSuccessError's rationale: the
+	// click above is a real, irreversible submission to Concur. From this
+	// point on, the expense has almost certainly already been created even
+	// if something below fails, so every error path wraps in
+	// expensesCreatePartialSuccessError rather than looking like "nothing
+	// happened, safe to retry" -- retrying blindly risks a duplicate line
+	// item.
+	time.Sleep(2 * time.Second)
+
+	after, err := fetchReportExpenses(cmd.Context(), c, userId, contextType, reportId)
+	if err != nil {
+		return nil, 0, &expensesCreatePartialSuccessError{
+			reportId: reportId,
+			cause:    fmt.Errorf("fetching expense list after browser fallback save: %w", err),
+		}
+	}
+
+	newExpense, err := diffNewExpense(before, after, beforeIDs)
+	if err != nil {
+		return nil, 0, &expensesCreatePartialSuccessError{reportId: reportId, cause: err}
+	}
+
+	fmt.Fprintf(cmd.ErrOrStderr(), "Expense created successfully via browser.\n")
+	return newExpense, 201, nil
+}
+
+// fetchReportExpenses reads the flat expense-list for a report via the
+// endpoint PR #1940's F1 fix already confirmed live: GET on the exact same
+// path expenses create POSTs to
+// (/reports/{report_id}/expenses) returns a genuine JSON array of expense
+// objects -- reads on this path are unaffected by the create/update defect
+// this file's browser fallback works around (confirmed live 2026-09-15:
+// GET succeeded and returned a real expense while a same-session PATCH to
+// an individual expense under this same path hit the identical 404
+// signature).
+//
+// Uses GetNoCache rather than Get: this is called twice in quick succession
+// (before and after the browser fallback's Save Expense click) against the
+// identical path/params, and the client's response cache would otherwise
+// serve the stale "before" snapshot back for "after" -- confirmed by a
+// failing test before this fix (the diff never saw the new expense despite
+// the browser save genuinely succeeding). Same rationale GetNoCache's own
+// doc comment gives for poll loops.
+func fetchReportExpenses(ctx context.Context, c *client.Client, userId, contextType, reportId string) ([]json.RawMessage, error) {
+	path := "/expensereports/v4/users/{user_id}/context/{context_type}/reports/{report_id}/expenses"
+	path = replacePathParam(path, "user_id", formatCLIParamValue(userId))
+	path = replacePathParam(path, "context_type", formatCLIParamValue(contextType))
+	path = replacePathParam(path, "report_id", formatCLIParamValue(reportId))
+
+	raw, err := c.GetNoCache(ctx, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("parsing expense list response: %w", err)
+	}
+	return items, nil
+}
+
+// expenseIDSet extracts each expense's expenseId into a set for diffing.
+func expenseIDSet(expenses []json.RawMessage) map[string]bool {
+	ids := make(map[string]bool, len(expenses))
+	for _, raw := range expenses {
+		var e struct {
+			ExpenseID string `json:"expenseId"`
+		}
+		if json.Unmarshal(raw, &e) == nil && e.ExpenseID != "" {
+			ids[e.ExpenseID] = true
+		}
+	}
+	return ids
+}
+
+// diffNewExpense finds the single expense present in after but not in
+// before (identified by beforeIDs, computed from before). Errors loudly on
+// zero or more than one new expense rather than guessing -- either outcome
+// means the Save Expense click's actual result could not be confirmed
+// cleanly, which the caller wraps in expensesCreatePartialSuccessError.
+func diffNewExpense(before, after []json.RawMessage, beforeIDs map[string]bool) (json.RawMessage, error) {
+	var newOnes []json.RawMessage
+	for _, raw := range after {
+		var e struct {
+			ExpenseID string `json:"expenseId"`
+		}
+		if json.Unmarshal(raw, &e) != nil || e.ExpenseID == "" {
+			continue
+		}
+		if !beforeIDs[e.ExpenseID] {
+			newOnes = append(newOnes, raw)
+		}
+	}
+	switch len(newOnes) {
+	case 1:
+		return newOnes[0], nil
+	case 0:
+		return nil, fmt.Errorf("no new expense appeared in the report's expense list after the Save Expense click (had %d before, %d after)", len(before), len(after))
+	default:
+		return nil, fmt.Errorf("%d new expenses appeared in the report's expense list after the Save Expense click -- expected exactly 1, cannot determine which one this call created", len(newOnes))
+	}
+}
+
+// expensesCreatePartialSuccessError signals that the browser fallback's
+// irreversible Save Expense click already fired before a later step
+// (confirming which expense it created) failed. The expense almost
+// certainly already exists in Concur even though this call returns an
+// error. Mirrors reportsCreatePartialSuccessError's rationale: callers
+// (including a human re-running the command by hand) must not treat this
+// like an ordinary failure and blindly retry, or they risk creating a
+// duplicate line item.
+type expensesCreatePartialSuccessError struct {
+	reportId string
+	cause    error
+}
+
+func (e *expensesCreatePartialSuccessError) Error() string {
+	return fmt.Sprintf(
+		"the browser fallback's Save Expense click already fired before this failure, so an expense may already exist on report %s even though it could not be confirmed which one -- run 'expenses apply-rules %s' or check the Concur web UI before retrying (retrying blindly risks creating a duplicate): %v",
+		e.reportId, e.reportId, e.cause,
+	)
+}
+
+func (e *expensesCreatePartialSuccessError) Unwrap() error { return e.cause }

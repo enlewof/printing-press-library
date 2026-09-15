@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "id": "expenses-create-browser-fallback",
+  "applied_at": "2026-09-15",
+  "base_run_id": "20260812-144651-60addfc5",
+  "base_printing_press_version": "4.30.3",
+  "summary": "feat(concur): add browser-automation fallback for expenses create on the confirmed-live backend 404 defect",
+  "reason": "expenses-create-body-shape-and-404-hint.json (this CLI's prior patch, same PR) fixed the request body shape and improved the 404's error message, but left the underlying Concur-backend defect itself undocumented as unfixable from the CLI. This patch closes that gap the same way report-creation-browser-fallback.json already closed an analogous one for reports create: when the HTTP path hits the confirmed-live defect (isExpensesCreate404DefectError), fall back to driving Concur's real 'New Expense' form via agent-browser. The direct new-expense URL (https://<host>/nui/expense/reports/<report_id>/expenses/new?expenseTypeId=<code>) and the Amount/Vendor Description/Business Purpose/Save Expense field names were confirmed live 2026-09-15 by navigating the real form. Because the browser never surfaces a usable expense ID, success is confirmed by diffing the report's expense list (GET .../reports/{id}/expenses, confirmed live unaffected by the mutation defect per PR #1940's F1 fix) before and after the Save Expense click -- which surfaced a second, real bug: the client's response cache was serving the stale 'before' snapshot back for the 'after' fetch, silently defeating the diff. Fixed by using GetNoCache (an existing client method built for exactly this poll-loop shape) instead of Get.",
+  "files": [
+    "internal/cli/expenses_create.go",
+    "internal/cli/expenses_create_fallback_test.go",
+    "README.md",
+    "SKILL.md"
+  ],
+  "call_sites": [
+    "isExpensesCreate404DefectError(err) && !flags.dryRun && !stdinBody",
+    "createExpenseViaBrowserFallback(",
+    "c.GetNoCache(ctx, path, nil)"
+  ],
+  "validated_outcome": "go build/vet clean; full go test ./... passes with zero regressions; 8 new tests (404-defect detection incl. a PATCH-path case, expense-list diffing incl. zero/multiple-new-expense error paths, partial-success error, and a full command-level test with a mocked agent-browser binary covering: defect triggers fallback, non-matching 404 does not, successful HTTP never touches the browser path). publish validate: same 2 pre-existing unrelated failures as the prior patch in this PR (phase5 fingerprint drift, verify-skill install-section drift); govulncheck/go vet/go build/--help/--version all clean.",
+  "findings_addressed": ["F2"],
+  "deferred_to_upstream": [
+    {
+      "feature": "expenses create: Transaction Date field targeting in the browser fallback",
+      "reason": "Confirmed live 2026-09-15 that the Transaction Date input has no stable accessible name (unlabeled, placeholder \"MM/DD/YYYY\" only) -- agent-browser's ref model is name/role based, so this field is left at Concur's own default (today) rather than targeted unreliably. A --date value other than today only warns. Superseding this requires either a more specific live-confirmed selector strategy for unlabeled fields, or an agent-browser capability for placeholder-based targeting."
+    },
+    {
+      "feature": "expenses create: Payment Type change in the browser fallback",
+      "reason": "Concur's form defaults Payment Type to Cash, matching this CLI's own default, so the common case never needs to touch it. Changing it to a different value was not verified live in this session -- a non-Cash --payment-type only warns rather than attempting an unverified interaction."
+    },
+    {
+      "feature": "expenses create HTTP 404 on fully-valid bodies (the underlying Concur-backend defect itself)",
+      "reason": "This patch works around the defect via browser automation; it does not fix the defect, which lives in Concur's backend, not this CLI. If Concur fixes this server-side, isExpensesCreate404DefectError simply stops matching and the pure-HTTP path keeps working as originally generated -- no cleanup needed, but worth noting this fallback becomes dead code at that point."
+    }
+  ]
+}
