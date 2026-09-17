@@ -145,6 +145,22 @@ Bonusly's API exposes no live rewards-catalog endpoint with prices (see README.m
 				return nil
 			}
 
+			// This command's core value (ranked redemption history) is
+			// inherently local-derived -- there is no live endpoint that
+			// returns an aggregated view of your own past redemptions, so
+			// --data-source live has no equivalent for it. Reject
+			// explicitly rather than silently ignoring the flag and serving
+			// local data anyway. --data-source local and the default
+			// "auto" are both fine: the history read is local either way,
+			// and fetchBonuslyPointBalances's own live-then-cached-snapshot
+			// fallback already degrades correctly under both. Mirrors the
+			// same rejection unsupportedDataSourceError produces for every
+			// live-endpoint-backed command whose strategy is hardcoded
+			// "local" (see validateDataSourceStrategy).
+			if flags.dataSource == "live" {
+				return unsupportedDataSourceError("local", flags.dataSource)
+			}
+
 			// check missing mirror -- before any client/network call, same
 			// ordering as recognition_gap.go. This command's output is
 			// object-shaped (not a bare array like redemptions forecast /

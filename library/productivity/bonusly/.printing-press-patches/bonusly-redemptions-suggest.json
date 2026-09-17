@@ -4,32 +4,8 @@
   "applied_at": "2026-09-17",
   "base_run_id": "20260810-153232-4e95f81e",
   "base_printing_press_version": "4.30.1",
-  "summary": "feat(bonusly): add `redemptions suggest` -- rewards to redeem again from your own history, next to your current point balance",
-  "reason": "User asked for a command that suggests redemptions based on the user's point balance. Bonusly's REST v1 API has no rewards-catalog endpoint with prices: README.md's Known Gaps #1 documents that awards/incentives (the closest thing to a claimable-rewards catalog) were live-probed across ~20 path variants each and every one 404'd, and the Redemption type (internal/types/types.go) has no cost field in the confirmed schema. A literal 'what can I afford from the catalog' feature is therefore not buildable without fabricating price data. Scoped with the user (AskUserQuestion) to the buildable alternative: join the live redeemable balance (earning_balance/giving_balance from GET /users/me, the same call promoted_balance.go's `balance` command already makes) against the user's own local redemption history (reward_name/state/created_at, synced via the existing `sync --resources redemptions` path), ranked by times-redeemed then recency. The command explicitly discloses (in --help text, the JSON `note` field, and README/SKILL prose) that it cannot filter by afford-ability, so agent and human callers cannot mistake frequency-ranking for a live price check.",
-  "files": [
-    "internal/cli/redemptions_suggest.go",
-    "internal/cli/redemptions_suggest_test.go",
-    "internal/cli/redemptions.go",
-    "internal/cli/which.go",
-    "internal/cli/root.go",
-    "internal/mcp/tools.go",
-    "README.md",
-    "SKILL.md"
-  ],
-  "call_sites": [
-    "newNovelRedemptionsSuggestCmd",
-    "\"redemptions suggest\"",
-    "rankRedemptionSuggestions",
-    "looksLikeCompletedRedemption",
-    "latestBalanceHistorySnapshot"
-  ],
-  "validated_outcome": "go build ./..., go vet ./..., and go test ./... all pass (TestNovelRedemptionsSuggestHelpWires wiring smoke test; TestRankRedemptionSuggestions and TestLooksLikeCompletedRedemption for the completed-state filter; TestNovelRedemptionsSuggestNegativeLimitRejected; TestLatestBalanceHistorySnapshot and TestParseBonuslyBalanceFields for the balance fallback). Manually verified `redemptions --help` lists `suggest` alongside `get`/`list-mine`/`forecast`, `redemptions suggest --help` renders the afford-ability disclosure, `--dry-run` short-circuits without a network call, and an end-to-end run against a seeded local mirror (redemptions + a balance_history snapshot, no live credential) correctly falls back to the cached balance with an explicit note and still ranks local history with pending rows excluded. No live Bonusly credential was available in this environment to exercise the live balance fetch success path end-to-end; the same disclosed-untested posture already applies to sibling `pp:data-source auto` novel commands `recognition gap` and `recognition search-mine`. Addressed PR #2014's Greptile review (3 P1 + 3 P2 findings): fixed pending/failed-attempt inflation, non-fatal balance resolution with a genuine balance_history-backed local fallback (not just softened error handling), terminal-escape scrubbing, and negative --limit validation; the one remaining architectural gap (local-store tables have no client-profile scoping, shared by 5 other novel commands) is tracked in issue #2015 rather than fixed here.",
-  "findings_addressed": ["F1"],
-  "deferred_to_upstream": [
-    {
-      "feature": "Per-client-profile scoping for every pp:data-source local/auto novel command's SQLite reads",
-      "reason": "internal/store/store.go's redemptions/recognition/balance_history tables have no account/profile column; fixing this needs a schema migration across the whole local-store layer (6 already-shipped commands), not a change scoped to this one command."
-    }
-  ],
-  "upstream_issue": "https://github.com/mvanhorn/printing-press-library/issues/2015"
+  "summary": "`redemptions suggest` ranks your own redemption history by frequency/recency next to your balance -- it can never filter by afford-ability (Bonusly has no priced rewards-catalog endpoint) and reads the balance_history table, not the generic local-store path, when the live balance call fails.",
+  "reason": "README Known Gaps #1 and the Redemption type's schema both confirm no priced-catalog data exists for a non-admin account -- a regen must not add afford-ability filtering without a new, live-verified catalog endpoint. Separately, \"balance\" is absent from knownSyncResourceNames()'s syncable list, so the generic --data-source=local path for it can never resolve; balance_history (written by `balance history`'s own RunE) is the only real local balance data available.",
+  "files": ["internal/cli/redemptions_suggest.go"],
+  "validated_outcome": "go test ./... passes; an end-to-end run against a seeded local mirror confirmed the balance_history fallback and completed-state filtering both work."
 }

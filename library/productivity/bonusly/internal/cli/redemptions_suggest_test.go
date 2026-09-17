@@ -188,6 +188,27 @@ func TestNovelRedemptionsSuggestNegativeLimitRejected(t *testing.T) {
 	}
 }
 
+// TestNovelRedemptionsSuggestRejectsDataSourceLive covers the --data-source
+// compatibility guard: this command's core value (ranked redemption
+// history) is inherently local-derived, so an explicit --data-source live
+// request must be rejected clearly rather than silently served from local
+// data anyway. Runs before any client/database access, so no mirror or
+// credentials are needed for this test.
+func TestNovelRedemptionsSuggestRejectsDataSourceLive(t *testing.T) {
+	cmd := RootCmd()
+	cmd.SetArgs([]string{"redemptions", "suggest", "--data-source", "live"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("redemptions suggest --data-source live succeeded, want a rejection error")
+	}
+	if !strings.Contains(err.Error(), "no live equivalent for this command") {
+		t.Fatalf("unexpected error for --data-source live: %v", err)
+	}
+}
+
 // newRedemptionsSuggestTestCmd returns a bare *cobra.Command with a real
 // context set. A zero-value &cobra.Command{} has a nil c.ctx until cobra's
 // own Execute()/ExecuteContext() sets one -- Command.Context() has no
