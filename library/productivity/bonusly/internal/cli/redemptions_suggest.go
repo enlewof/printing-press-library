@@ -167,26 +167,33 @@ Bonusly's API exposes no live rewards-catalog endpoint with prices (see README.m
 				return err
 			}
 
-			// Balance-fetch failure is deliberately non-fatal: this
-			// command's core value (ranked local history) does not depend
-			// on the live balance call succeeding, and --data-source local
-			// has no working local mirror for the "balance" resourceType
-			// today (it is not in knownSyncResourceNames()'s syncable list,
-			// so resolveLocal's fallback always 404s -- the same gap
-			// promoted_balance.go's `balance` command inherits from its own
-			// identical strategy="auto" call). Surfacing balanceUnavailable
-			// as an explicit, distinct reason -- rather than hard-failing
-			// the whole command or silently rendering "unknown" with no
-			// explanation -- lets a caller tell "balance couldn't be
-			// resolved" apart from "you have zero points".
-			earningBalance, givingBalance, balanceUnavailable := fetchBonuslyPointBalances(cmd, c, flags)
-
+			// Opened before the balance fetch so fetchBonuslyPointBalances
+			// can fall back to the balance_history table (see its doc
+			// comment) when the live call fails.
 			db, err := store.OpenWithContext(cmd.Context(), dbPath)
 			if err != nil {
 				return err
 			}
 			defer db.Close()
 
+			// Balance-fetch failure is deliberately non-fatal: this
+			// command's core value (ranked local history) does not depend
+			// on the live balance call succeeding. Surfacing
+			// balanceUnavailable as an explicit, distinct reason -- rather
+			// than hard-failing the whole command or silently rendering
+			// "unknown" with no explanation -- lets a caller tell "balance
+			// couldn't be resolved" apart from "you have zero points".
+			earningBalance, givingBalance, balanceUnavailable := fetchBonuslyPointBalances(cmd, c, flags, db)
+
+			// KNOWN GAP, tracked in
+			// https://github.com/mvanhorn/printing-press-library/issues/2015:
+			// this table has no client-profile/account column, so switching
+			// --client-profile mid-use can mix a previous account's rows
+			// into this read. Shared by every pp:data-source local/auto
+			// novel command in this CLI (forecast, recognition
+			// gap/search-mine/values/audit) -- fixing it means a schema
+			// migration across the whole local-store layer, tracked in the
+			// issue above rather than scoped to this one query.
 			rows, err := db.DB().QueryContext(cmd.Context(), `
 				SELECT reward_name, state, created_at
 				FROM redemptions
@@ -282,47 +289,98 @@ Bonusly's API exposes no live rewards-catalog endpoint with prices (see README.m
 //
 // Deliberately never returns a hard error: this command's core value (your
 // ranked local redemption history) does not depend on the balance call
-// succeeding, and --data-source local has no reachable local mirror for the
-// "balance" resourceType today ("balance" is absent from
-// knownSyncResourceNames()'s syncable list, so resolveLocal's ID-based
-// lookup can never be populated by `sync` -- the same gap
-// promoted_balance.go's `balance` command inherits from its own identical
-// strategy="auto" call; not introduced here). Any failure -- network,
-// local-resolution dead-end, or an unexpected response shape -- is reported
-// through the returned reason string instead of aborting the whole command,
-// and the two are kept distinguishable: a genuinely absent field (fields
-// parsed, both nil) returns reason "" the same as success, while a call or
-// decode failure always carries a non-empty, specific reason so callers
-// never render "unknown" without an explanation.
-func fetchBonuslyPointBalances(cmd *cobra.Command, c *client.Client, flags *rootFlags) (earningBalance, givingBalance *int64, unavailableReason string) {
-	balanceRaw, _, err := resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "balance", false, "/users/me", nil, nil, "", cmd.ErrOrStderr())
-	if err != nil {
-		return nil, nil, fmt.Sprintf("could not fetch your current balance: %v", err)
+// succeeding. When the live call fails, this falls back to the most recent
+// row in the balance_history table -- a real, already-populated local data
+// source written by `balance history`'s own RunE on every run (see
+// balance_history.go) -- rather than the generic --data-source=local path's
+// resourceType="balance" KV bucket, which is never populated ("balance" is
+// absent from knownSyncResourceNames()'s syncable list, so nothing ever
+// writes there regardless of how it's looked up; the same gap
+// promoted_balance.go's `balance` command has via its own identical
+// strategy="auto" call, not introduced here). The fallback only helps users
+// who have run `balance history` at least once; a caller with neither a
+// live response nor a cached snapshot gets a reason string saying so.
+//
+// The two failure shapes stay distinguishable: a genuinely absent field
+// (live call succeeded, fields parsed, both nil) returns reason "" the same
+// as success, while every other outcome -- call error, decode failure, or a
+// stale-snapshot fallback -- always carries a non-empty, specific reason so
+// callers never render "unknown" without an explanation.
+func fetchBonuslyPointBalances(cmd *cobra.Command, c *client.Client, flags *rootFlags, db *store.Store) (earningBalance, givingBalance *int64, unavailableReason string) {
+	balanceRaw, _, liveErr := resolveReadWithStrategyAndResponsePath(cmd.Context(), c, flags, "auto", "balance", false, "/users/me", nil, nil, "", cmd.ErrOrStderr())
+	if liveErr == nil {
+		if eb, gb, ok := parseBonuslyBalanceFields(balanceRaw); ok {
+			return eb, gb, ""
+		}
+		liveErr = fmt.Errorf("response did not contain earning_balance or giving_balance in the shape this CLI recognizes")
 	}
 
+	eb, gb, recordedAt := latestBalanceHistorySnapshot(cmd, db)
+	if recordedAt == "" {
+		return nil, nil, fmt.Sprintf("could not fetch your current balance (%v); no cached snapshot found either -- run 'bonusly-pp-cli balance history' at least once to enable an offline fallback", liveErr)
+	}
+	return eb, gb, fmt.Sprintf("live balance fetch failed (%v); showing the most recent cached snapshot from %s instead -- run 'bonusly-pp-cli balance history' to refresh it", liveErr, recordedAt)
+}
+
+// parseBonuslyBalanceFields extracts earning_balance/giving_balance from a
+// /users/me response, tolerating both the documented {"result": {...}}
+// envelope and a bare unwrapped object -- balance's response shape has
+// drifted from the spec's assumptions before (pp:hand-edit
+// bonusly-endpoint-fix in promoted_balance.go). ok is false only when
+// neither shape yields either field, so the caller can tell "parsed
+// successfully, fields absent" (ok=true, both nil) apart from "could not
+// find the fields at all" (ok=false).
+func parseBonuslyBalanceFields(raw json.RawMessage) (earningBalance, givingBalance *int64, ok bool) {
 	var envelope struct {
 		Result struct {
 			EarningBalance *int64 `json:"earning_balance"`
 			GivingBalance  *int64 `json:"giving_balance"`
 		} `json:"result"`
 	}
-	if unmarshalErr := json.Unmarshal(balanceRaw, &envelope); unmarshalErr == nil &&
+	if err := json.Unmarshal(raw, &envelope); err == nil &&
 		(envelope.Result.EarningBalance != nil || envelope.Result.GivingBalance != nil) {
-		return envelope.Result.EarningBalance, envelope.Result.GivingBalance, ""
+		return envelope.Result.EarningBalance, envelope.Result.GivingBalance, true
 	}
 
-	// Defensive fallback: balance's response shape has drifted from the
-	// spec's assumptions before (pp:hand-edit bonusly-endpoint-fix in
-	// promoted_balance.go). Tolerate an unwrapped body on the same bytes
-	// rather than failing outright if a cache layer or future API change
-	// ever returns the object without the {"result": ...} envelope.
 	var bare struct {
 		EarningBalance *int64 `json:"earning_balance"`
 		GivingBalance  *int64 `json:"giving_balance"`
 	}
-	if unmarshalErr := json.Unmarshal(balanceRaw, &bare); unmarshalErr == nil &&
+	if err := json.Unmarshal(raw, &bare); err == nil &&
 		(bare.EarningBalance != nil || bare.GivingBalance != nil) {
-		return bare.EarningBalance, bare.GivingBalance, ""
+		return bare.EarningBalance, bare.GivingBalance, true
 	}
-	return nil, nil, "balance response did not contain earning_balance or giving_balance in the shape this CLI recognizes"
+	return nil, nil, false
+}
+
+// latestBalanceHistorySnapshot reads the most recent row from the
+// balance_history table (see balance_history.go), if any. Returns a blank
+// recordedAt when the table doesn't exist yet (never ran `balance history`),
+// has no rows, or the query fails for any other reason -- this is a
+// best-effort fallback inside an already-degraded path, so every failure
+// mode collapses to "no snapshot available" rather than a second error the
+// caller would have to juggle alongside the original live-call failure.
+func latestBalanceHistorySnapshot(cmd *cobra.Command, db *store.Store) (earningBalance, givingBalance *int64, recordedAt string) {
+	if db == nil {
+		return nil, nil, ""
+	}
+	row := db.DB().QueryRowContext(cmd.Context(), `
+		SELECT recorded_at, earning_balance, giving_balance
+		FROM balance_history
+		ORDER BY recorded_at DESC
+		LIMIT 1`)
+	var recorded sql.NullString
+	var earning, giving sql.NullInt64
+	if err := row.Scan(&recorded, &earning, &giving); err != nil || !recorded.Valid {
+		return nil, nil, ""
+	}
+	if earning.Valid {
+		v := earning.Int64
+		earningBalance = &v
+	}
+	if giving.Valid {
+		v := giving.Int64
+		givingBalance = &v
+	}
+	return earningBalance, givingBalance, recorded.String
 }
