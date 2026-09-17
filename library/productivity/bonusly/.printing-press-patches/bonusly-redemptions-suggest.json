@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "id": "bonusly-redemptions-suggest",
+  "applied_at": "2026-09-17",
+  "base_run_id": "20260810-153232-4e95f81e",
+  "base_printing_press_version": "4.30.1",
+  "summary": "feat(bonusly): add `redemptions suggest` -- rewards to redeem again from your own history, next to your current point balance",
+  "reason": "User asked for a command that suggests redemptions based on the user's point balance. Bonusly's REST v1 API has no rewards-catalog endpoint with prices: README.md's Known Gaps #1 documents that awards/incentives (the closest thing to a claimable-rewards catalog) were live-probed across ~20 path variants each and every one 404'd, and the Redemption type (internal/types/types.go) has no cost field in the confirmed schema. A literal 'what can I afford from the catalog' feature is therefore not buildable without fabricating price data. Scoped with the user (AskUserQuestion) to the buildable alternative: join the live redeemable balance (earning_balance/giving_balance from GET /users/me, the same call promoted_balance.go's `balance` command already makes) against the user's own local redemption history (reward_name/state/created_at, synced via the existing `sync --resources redemptions` path), ranked by times-redeemed then recency. The command explicitly discloses (in --help text, the JSON `note` field, and README/SKILL prose) that it cannot filter by afford-ability, so agent and human callers cannot mistake frequency-ranking for a live price check.",
+  "files": [
+    "internal/cli/redemptions_suggest.go",
+    "internal/cli/redemptions_suggest_test.go",
+    "internal/cli/redemptions.go",
+    "internal/cli/which.go",
+    "internal/cli/root.go",
+    "internal/mcp/tools.go",
+    "README.md",
+    "SKILL.md"
+  ],
+  "call_sites": [
+    "newNovelRedemptionsSuggestCmd",
+    "\"redemptions suggest\"",
+    "rankRedemptionSuggestions"
+  ],
+  "validated_outcome": "go build ./..., go vet ./..., and go test ./... all pass (including the new TestNovelRedemptionsSuggestHelpWires wiring smoke test and TestRankRedemptionSuggestions table-driven unit tests). Manually verified `redemptions --help` lists `suggest` alongside `get`/`list-mine`/`forecast`, `redemptions suggest --help` renders the afford-ability disclosure, and `redemptions suggest --dry-run` short-circuits without a network call. No live Bonusly credential was available in this environment to exercise the live balance fetch end-to-end; the same disclosed-untested posture already applies to sibling `pp:data-source auto` novel commands `recognition gap` and `recognition search-mine` (both say 'not yet verified against a real API response in this build' in their own descriptions), and this command's descriptions carry the same caveat.",
+  "findings_addressed": ["F1"]
+}
