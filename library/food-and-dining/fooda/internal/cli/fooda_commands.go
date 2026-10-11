@@ -1012,13 +1012,14 @@ func init() {
 					return err
 				}
 
-				eventID := orderAddEvent
+				eventID := normalizeEventID(orderAddEvent)
 				if eventID == "" {
 					eventID, err = getUpcomingEvent(ctx, c, flags)
 					if err != nil {
 						return err
 					}
 				}
+				eventID = normalizeEventID(eventID)
 
 				// Resolve URL path for event
 				var eventPath string
@@ -1082,7 +1083,7 @@ func init() {
 				targetItem := matched[0]
 
 				// Fetch individual menu item page to get form and parent_id, csrf token, options
-				itemPageURL := fmt.Sprintf("/accounts/%s/select_events/%s/items/%s", acct, strings.TrimPrefix(eventID, "S"), targetItem.ID)
+				itemPageURL := fmt.Sprintf("/accounts/%s/select_events/%s/items/%s", acct, eventID, targetItem.ID)
 				if strings.Contains(eventPath, "/select_events/") {
 					parts := strings.Split(eventPath, "/select_events/")
 					if len(parts) > 1 {
@@ -1101,21 +1102,18 @@ func init() {
 					return err
 				}
 
-				// Resolve selected options
-				var selectedOptionIDs []string
-				var selectedOptionLabels []string
-				var optionsPriceDelta float64
+				// Resolve selected options (Item 2)
+				var explicitlySelectedIDs []string
+				var explicitlySelectedLabels []string
 
 				for _, optArg := range orderAddOptions {
 					var matches []parsedItemOption
-					// 1. exact ID match
 					for _, o := range form.Options {
 						if o.ID == optArg {
 							matches = []parsedItemOption{o}
 							break
 						}
 					}
-					// 2. exact label match (case-insensitive)
 					if len(matches) == 0 {
 						for _, o := range form.Options {
 							cleanLabel := strings.TrimSpace(o.Label)
@@ -1127,7 +1125,6 @@ func init() {
 							}
 						}
 					}
-					// 3. unique substring match
 					if len(matches) == 0 {
 						for _, o := range form.Options {
 							if strings.Contains(strings.ToLower(o.Label), strings.ToLower(optArg)) {
@@ -1148,9 +1145,76 @@ func init() {
 					}
 
 					selectedOpt := matches[0]
-					selectedOptionIDs = append(selectedOptionIDs, selectedOpt.ID)
-					selectedOptionLabels = append(selectedOptionLabels, selectedOpt.Label)
-					optionsPriceDelta += selectedOpt.PriceDelta
+					explicitlySelectedIDs = append(explicitlySelectedIDs, selectedOpt.ID)
+					explicitlySelectedLabels = append(explicitlySelectedLabels, selectedOpt.Label)
+				}
+
+				// Enforce required option groups (Item 2)
+				var finalOptionIDs []string
+				var finalOptionLabels []string
+				var optionsPriceDelta float64
+				var defaultsShown []string
+
+				usedExplicitIDs := map[string]bool{}
+
+				for _, g := range form.Groups {
+					var userSelectedInGroup []string
+					for _, selID := range explicitlySelectedIDs {
+						for _, optID := range g.OptionIDs {
+							if selID == optID {
+								userSelectedInGroup = append(userSelectedInGroup, selID)
+								usedExplicitIDs[selID] = true
+								break
+							}
+						}
+					}
+
+					var groupSelections []string
+
+					if len(userSelectedInGroup) > 0 {
+						if g.IsRequired && len(userSelectedInGroup) != g.RequiredCount {
+							return usageErr(fmt.Errorf("invalid number of options selected for group %q: selected %d, required exactly %d; choices:\n%s", g.Heading, len(userSelectedInGroup), g.RequiredCount, formatGroupChoices(g, form.Options)))
+						}
+						groupSelections = userSelectedInGroup
+					} else {
+						if g.IsRequired && len(g.Defaults) != g.RequiredCount {
+							return usageErr(fmt.Errorf("missing required option selections for group %q: required exactly %d; choices:\n%s", g.Heading, g.RequiredCount, formatGroupChoices(g, form.Options)))
+						}
+						groupSelections = g.Defaults
+						if g.IsRequired && len(g.Defaults) > 0 {
+							for _, defID := range g.Defaults {
+								for _, o := range form.Options {
+									if o.ID == defID {
+										defaultsShown = append(defaultsShown, strings.TrimSpace(o.Label))
+									}
+								}
+							}
+						}
+					}
+
+					for _, id := range groupSelections {
+						finalOptionIDs = append(finalOptionIDs, id)
+						for _, o := range form.Options {
+							if o.ID == id {
+								finalOptionLabels = append(finalOptionLabels, o.Label)
+								optionsPriceDelta += o.PriceDelta
+								break
+							}
+						}
+					}
+				}
+
+				for _, selID := range explicitlySelectedIDs {
+					if !usedExplicitIDs[selID] {
+						finalOptionIDs = append(finalOptionIDs, selID)
+						for _, o := range form.Options {
+							if o.ID == selID {
+								finalOptionLabels = append(finalOptionLabels, o.Label)
+								optionsPriceDelta += o.PriceDelta
+								break
+							}
+						}
+					}
 				}
 
 				totalItemPrice := targetItem.Price + optionsPriceDelta
@@ -1163,19 +1227,34 @@ func init() {
 				formVals.Set("info[item_id]", form.ItemID)
 				formVals.Set("info[item_type]", form.ItemType)
 				formVals.Set("quantity", strconv.Itoa(orderAddQty))
-				for _, id := range selectedOptionIDs {
+				for _, id := range finalOptionIDs {
 					formVals.Add("info[options][]", id)
 				}
 				if orderAddNote != "" {
 					formVals.Set("info[instructions]", orderAddNote)
 				}
 
-				postURL := fmt.Sprintf("/accounts/%s/select_events/%s/items", acct, strings.TrimPrefix(eventID, "S"))
+				postURL := fmt.Sprintf("/accounts/%s/select_events/%s/items", acct, eventID)
 				if strings.Contains(eventPath, "/select_events/") {
 					parts := strings.Split(eventPath, "/select_events/")
 					if len(parts) > 1 {
 						sID := strings.Split(parts[1], "/")[0]
 						postURL = fmt.Sprintf("/accounts/%s/select_events/%s/items", acct, sID)
+					}
+				}
+
+				var requiredChoices []string
+				for _, g := range form.Groups {
+					if g.IsRequired {
+						var opts []string
+						for _, id := range g.OptionIDs {
+							for _, o := range form.Options {
+								if o.ID == id {
+									opts = append(opts, fmt.Sprintf("%s (%s)", strings.TrimSpace(o.Label), o.ID))
+								}
+							}
+						}
+						requiredChoices = append(requiredChoices, fmt.Sprintf("%s [%s]", g.Heading, strings.Join(opts, ", ")))
 					}
 				}
 
@@ -1193,36 +1272,96 @@ func init() {
 						Name:       targetItem.Name,
 						Vendor:     targetItem.VendorName,
 						PriceCents: int(math.Round(totalItemPrice * 100)),
-						Options:    selectedOptionLabels,
+						Options:    finalOptionLabels,
 					}
 
 					if !orderAddConfirm {
 						type dryRunAddResult struct {
-							DryRun  bool     `json:"dry_run"`
-							Action  string   `json:"action"`
-							Item    jsonItem `json:"item"`
-							Request string   `json:"request"`
+							DryRun          bool     `json:"dry_run"`
+							Action          string   `json:"action"`
+							Item            jsonItem `json:"item"`
+							RequiredChoices []string `json:"required_choices,omitempty"`
+							Request         string   `json:"request"`
 						}
 						out := dryRunAddResult{
-							DryRun:  true,
-							Action:  "order add",
-							Item:    ji,
-							Request: fmt.Sprintf("POST %s with %s", postURL, formVals.Encode()),
+							DryRun:          true,
+							Action:          "order add",
+							Item:            ji,
+							RequiredChoices: requiredChoices,
+							Request:         fmt.Sprintf("POST %s with %s", postURL, redactedFormPreview(formVals)),
 						}
 						return printJSONFiltered(cmd.OutOrStdout(), out, flags)
 					}
 
-					_, statusCode, err := makeAPIRequest(ctx, c, "POST", postURL, []byte(formVals.Encode()), "application/x-www-form-urlencoded")
-					if err != nil {
-						return err
-					}
-					if statusCode >= 400 {
-						return fmt.Errorf("failed to add item to cart (HTTP %d)", statusCode)
+					// Read initial cart items
+					initialItems, _, _ := getCartAndPricing(ctx, c)
+					initialCount := 0
+					for _, it := range initialItems {
+						if q, ok := it["quantity"].(float64); ok {
+							initialCount += int(q)
+						} else if q, ok := it["quantity"].(int); ok {
+							initialCount += q
+						} else {
+							initialCount++
+						}
 					}
 
-					items, pricing, err := getCartAndPricing(ctx, c)
+					clientWithNoRedirect := &http.Client{
+						Timeout:   c.HTTPClient.Timeout,
+						Jar:       c.HTTPClient.Jar,
+						Transport: c.HTTPClient.Transport,
+						CheckRedirect: func(req *http.Request, via []*http.Request) error {
+							return http.ErrUseLastResponse
+						},
+					}
+
+					req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+postURL, strings.NewReader(formVals.Encode()))
 					if err != nil {
 						return err
+					}
+
+					clientToken, sessionToken, err := c.EnsureHandshakeTokens(ctx)
+					if err != nil {
+						return err
+					}
+
+					req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36")
+					req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+					req.Header.Set("Origin", "https://app.fooda.com")
+					req.Header.Set("Referer", "https://app.fooda.com/my")
+					req.Header.Set("x-clienttoken", clientToken)
+					req.Header.Set("x-sessiontoken", sessionToken)
+					req.Header.Set("X-CSRF-Token", form.CSRFToken)
+					req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+					resp, err := clientWithNoRedirect.Do(req)
+					if err != nil {
+						return err
+					}
+					resp.Body.Close()
+
+					if resp.StatusCode >= 400 {
+						return fmt.Errorf("failed to add item to cart (HTTP %d)", resp.StatusCode)
+					}
+
+					// Verify cart items increased
+					finalItems, pricing, err := getCartAndPricing(ctx, c)
+					if err != nil {
+						return err
+					}
+					finalCount := 0
+					for _, it := range finalItems {
+						if q, ok := it["quantity"].(float64); ok {
+							finalCount += int(q)
+						} else if q, ok := it["quantity"].(int); ok {
+							finalCount += q
+						} else {
+							finalCount++
+						}
+					}
+
+					if finalCount <= initialCount {
+						return fmt.Errorf("item was not added to the cart successfully: count did not increase")
 					}
 
 					type confirmedAddResult struct {
@@ -1237,20 +1376,25 @@ func init() {
 						Added: true,
 						Item:  ji,
 					}
-					out.Cart.Items = items
+					out.Cart.Items = finalItems
 					out.Cart.Pricing = pricing
 
 					return printJSONFiltered(cmd.OutOrStdout(), out, flags)
 				}
 
 				if !orderAddConfirm {
-					// Dry-run mode plain text
 					fmt.Fprintf(cmd.OutOrStdout(), "Resolved Item:  %s\n", targetItem.Name)
 					fmt.Fprintf(cmd.OutOrStdout(), "Vendor:         %s\n", targetItem.VendorName)
 					fmt.Fprintf(cmd.OutOrStdout(), "Base Price:     $%.2f\n", targetItem.Price)
-					if len(selectedOptionLabels) > 0 {
+					if len(requiredChoices) > 0 {
+						fmt.Fprintf(cmd.OutOrStdout(), "Required choices: %s\n", strings.Join(requiredChoices, "; "))
+					}
+					if len(defaultsShown) > 0 {
+						fmt.Fprintf(cmd.OutOrStdout(), "Defaults:       %s\n", strings.Join(defaultsShown, ", "))
+					}
+					if len(explicitlySelectedLabels) > 0 {
 						fmt.Fprintln(cmd.OutOrStdout(), "Selected Options:")
-						for _, label := range selectedOptionLabels {
+						for _, label := range explicitlySelectedLabels {
 							fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", label)
 						}
 					}
@@ -1259,12 +1403,75 @@ func init() {
 					return nil
 				}
 
-				_, statusCode, err := makeAPIRequest(ctx, c, "POST", postURL, []byte(formVals.Encode()), "application/x-www-form-urlencoded")
+				// Read initial cart items
+				initialItems, _, _ := getCartAndPricing(ctx, c)
+				initialCount := 0
+				for _, it := range initialItems {
+					if q, ok := it["quantity"].(float64); ok {
+						initialCount += int(q)
+					} else if q, ok := it["quantity"].(int); ok {
+						initialCount += q
+					} else {
+						initialCount++
+					}
+				}
+
+				clientWithNoRedirect := &http.Client{
+					Timeout:   c.HTTPClient.Timeout,
+					Jar:       c.HTTPClient.Jar,
+					Transport: c.HTTPClient.Transport,
+					CheckRedirect: func(req *http.Request, via []*http.Request) error {
+						return http.ErrUseLastResponse
+					},
+				}
+
+				req, err := http.NewRequestWithContext(ctx, "POST", c.BaseURL+postURL, strings.NewReader(formVals.Encode()))
 				if err != nil {
 					return err
 				}
-				if statusCode >= 400 {
-					return fmt.Errorf("failed to add item to cart (HTTP %d)", statusCode)
+
+				clientToken, sessionToken, err := c.EnsureHandshakeTokens(ctx)
+				if err != nil {
+					return err
+				}
+
+				req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36")
+				req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
+				req.Header.Set("Origin", "https://app.fooda.com")
+				req.Header.Set("Referer", "https://app.fooda.com/my")
+				req.Header.Set("x-clienttoken", clientToken)
+				req.Header.Set("x-sessiontoken", sessionToken)
+				req.Header.Set("X-CSRF-Token", form.CSRFToken)
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+				resp, err := clientWithNoRedirect.Do(req)
+				if err != nil {
+					return err
+				}
+				resp.Body.Close()
+
+				if resp.StatusCode >= 400 {
+					return fmt.Errorf("failed to add item to cart (HTTP %d)", resp.StatusCode)
+				}
+
+				// Verify cart items increased
+				finalItems, _, err := getCartAndPricing(ctx, c)
+				if err != nil {
+					return err
+				}
+				finalCount := 0
+				for _, it := range finalItems {
+					if q, ok := it["quantity"].(float64); ok {
+						finalCount += int(q)
+					} else if q, ok := it["quantity"].(int); ok {
+						finalCount += q
+					} else {
+						finalCount++
+					}
+				}
+
+				if finalCount <= initialCount {
+					return fmt.Errorf("item was not added to the cart successfully: count did not increase")
 				}
 
 				fmt.Fprintln(cmd.OutOrStdout(), "Successfully added item to cart!")
@@ -1356,16 +1563,9 @@ func init() {
 					}
 				}
 
-				numericID := strings.TrimPrefix(eventID, "S")
-				numericID = strings.TrimPrefix(numericID, "s")
-				if !isNumeric(numericID) {
-					u, err := url.Parse(eventID)
-					if err == nil && u.Path != "" {
-						parts := strings.Split(u.Path, "/select_events/")
-						if len(parts) > 1 {
-							numericID = strings.TrimPrefix(strings.Split(parts[1], "/")[0], "S")
-						}
-					}
+				numericID, err := resolveSelectEventID(ctx, c, flags, eventID)
+				if err != nil {
+					return err
 				}
 
 				rawEventInfo, statusCode, err := makeAPIRequest(ctx, c, "GET", "/api/v2/select_events/by?id="+numericID, nil, "")
@@ -1387,6 +1587,10 @@ func init() {
 						DeliveryTime          string `json:"delivery_time"`
 						OrderingWindowEndTime string `json:"ordering_window_end_time"`
 						Status                string `json:"status"`
+						Vendors               []struct {
+							ID   int    `json:"id"`
+							Name string `json:"name"`
+						} `json:"vendors"`
 					} `json:"select_event"`
 				}
 				if err := json.Unmarshal(rawEventInfo, &eventEnvelope); err != nil {
@@ -1492,6 +1696,27 @@ func init() {
 
 				rawPayload, _ := json.Marshal(payload)
 
+				// Parse orders straight from response
+				type orderItem struct {
+					Name     string `json:"name"`
+					Quantity int    `json:"quantity"`
+				}
+				type responseOrder struct {
+					ID                  int         `json:"id"`
+					RequestID           string      `json:"request_id"`
+					Status              string      `json:"status"`
+					DeliveryTime        string      `json:"delivery_time"`
+					SubtotalAmountCents int         `json:"subtotal_amount_cents"`
+					SubsidyCents        int         `json:"subsidy_cents"`
+					TotalCents          int         `json:"total_cents"`
+					Items               []orderItem `json:"items"`
+				}
+				var placeResponse struct {
+					Data struct {
+						Orders []responseOrder `json:"orders"`
+					} `json:"data"`
+				}
+
 				if flags.asJSON {
 					if !orderPlaceConfirm {
 						type placePreviewResult struct {
@@ -1521,7 +1746,49 @@ func init() {
 						}
 						_ = json.Unmarshal(rawPrice, &pricingData)
 
-						out.Cart = cartData.Data.Items
+						// Format cart items using resolved vendor names
+						type formattedCartItem struct {
+							Name     string   `json:"name"`
+							Quantity int      `json:"quantity"`
+							Price    string   `json:"price"`
+							Vendor   string   `json:"vendor"`
+							Options  []string `json:"options"`
+						}
+						var formattedItems []formattedCartItem
+						for _, it := range cartData.Data.Items {
+							name, _ := it["name"].(string)
+							qty := 1
+							if q, ok := it["quantity"].(float64); ok {
+								qty = int(q)
+							} else if q, ok := it["quantity"].(int); ok {
+								qty = q
+							}
+							priceCents := 0
+							if pc, ok := it["price_cents"].(float64); ok {
+								priceCents = int(pc)
+							} else if pc, ok := it["price_cents"].(int); ok {
+								priceCents = pc
+							}
+							var opts []string
+							if rawOpts, ok := it["options"].([]any); ok {
+								for _, o := range rawOpts {
+									if optMap, ok := o.(map[string]any); ok {
+										if optName, ok := optMap["name"].(string); ok {
+											opts = append(opts, optName)
+										}
+									}
+								}
+							}
+							formattedItems = append(formattedItems, formattedCartItem{
+								Name:     name,
+								Quantity: qty,
+								Price:    fmt.Sprintf("$%.2f", float64(priceCents)/100.0),
+								Vendor:   resolveVendorName(it["vendor_id"], ev.Vendors),
+								Options:  opts,
+							})
+						}
+
+						out.Cart = formattedItems
 						out.Pricing = pricingData.Data.Pricing
 						out.Event.DeliveryTime = ev.DeliveryTime
 						out.Event.WindowEnd = ev.OrderingWindowEndTime
@@ -1538,23 +1805,15 @@ func init() {
 						return fmt.Errorf("failed to place order: POST /api/v1/orders returned HTTP %d", statusCode)
 					}
 
+					_ = json.Unmarshal(rawResponse, &placeResponse)
+
 					type confirmedPlaceResult struct {
-						Placed      bool            `json:"placed"`
-						Response    json.RawMessage `json:"response"`
-						LatestOrder any             `json:"latest_order,omitempty"`
+						Placed bool            `json:"placed"`
+						Orders []responseOrder `json:"orders"`
 					}
-
 					out := confirmedPlaceResult{
-						Placed:   true,
-						Response: json.RawMessage(rawResponse),
-					}
-
-					rawOrders, err := c.GetHTML(ctx, "/settings/orders")
-					if err == nil {
-						props, err := client.ParsePastOrders(string(rawOrders))
-						if err == nil && len(props.Presenter) > 0 {
-							out.LatestOrder = props.Presenter[0].Order
-						}
+						Placed: true,
+						Orders: placeResponse.Data.Orders,
 					}
 
 					return printJSONFiltered(cmd.OutOrStdout(), out, flags)
@@ -1562,7 +1821,7 @@ func init() {
 
 				if !orderPlaceConfirm {
 					fmt.Fprintln(cmd.OutOrStdout(), "=== Order Placement Preview ===")
-					_ = showCartAndPricing(ctx, c, cmd.OutOrStdout(), flags)
+					_ = printCartItemsAndPricing(cmd.OutOrStdout(), cartEnvelope.Data.Items, priceEnvelope.Data.Pricing, ev.Vendors, flags)
 					fmt.Fprintf(cmd.OutOrStdout(), "\nDelivery Time:         %s\n", ev.DeliveryTime)
 					fmt.Fprintf(cmd.OutOrStdout(), "Ordering Window Ends:  %s\n", ev.OrderingWindowEndTime)
 					fmt.Fprintf(cmd.OutOrStdout(), "Location ID:           %d\n", locationID)
@@ -1579,18 +1838,21 @@ func init() {
 					return fmt.Errorf("failed to place order: POST /api/v1/orders returned HTTP %d", statusCode)
 				}
 
-				fmt.Fprintln(cmd.OutOrStdout(), "Order successfully placed!")
-				fmt.Fprintf(cmd.OutOrStdout(), "Response: %s\n", string(rawResponse))
+				_ = json.Unmarshal(rawResponse, &placeResponse)
 
-				rawOrders, err := c.GetHTML(ctx, "/settings/orders")
-				if err == nil {
-					props, err := client.ParsePastOrders(string(rawOrders))
-					if err == nil && len(props.Presenter) > 0 {
-						newest := props.Presenter[0].Order
-						fmt.Fprintf(cmd.OutOrStdout(), "\nNewest Order Details (from Server):\n")
-						fmt.Fprintf(cmd.OutOrStdout(), "  UUID:     %s\n", newest.RequestID)
-						fmt.Fprintf(cmd.OutOrStdout(), "  Vendor:   %s\n", strings.Join(newest.VendorNames, ", "))
-						fmt.Fprintf(cmd.OutOrStdout(), "  Delivery: %s\n", newest.Delivery)
+				fmt.Fprintln(cmd.OutOrStdout(), "Order successfully placed!")
+				fmt.Fprintln(cmd.OutOrStdout(), "\nOrder Placement Details (from Server Response):")
+				for _, o := range placeResponse.Data.Orders {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Order ID:    %d\n", o.ID)
+					fmt.Fprintf(cmd.OutOrStdout(), "  Request ID:  %s\n", o.RequestID)
+					fmt.Fprintf(cmd.OutOrStdout(), "  Status:      %s\n", o.Status)
+					fmt.Fprintf(cmd.OutOrStdout(), "  Delivery:    %s\n", o.DeliveryTime)
+					fmt.Fprintf(cmd.OutOrStdout(), "  Subtotal:    $%.2f\n", float64(o.SubtotalAmountCents)/100.0)
+					fmt.Fprintf(cmd.OutOrStdout(), "  Subsidy:     -$%.2f\n", float64(o.SubsidyCents)/100.0)
+					fmt.Fprintf(cmd.OutOrStdout(), "  Total Paid:  $%.2f\n", float64(o.TotalCents)/100.0)
+					fmt.Fprintln(cmd.OutOrStdout(), "  Items:")
+					for _, it := range o.Items {
+						fmt.Fprintf(cmd.OutOrStdout(), "    - %dx %s\n", it.Quantity, it.Name)
 					}
 				}
 
@@ -2915,6 +3177,7 @@ type parsedItemForm struct {
 	ItemID     string
 	ItemType   string
 	CSRFToken  string
+	Groups     []parsedOptionGroup
 	Options    []parsedItemOption
 }
 
@@ -2922,6 +3185,14 @@ type parsedItemOption struct {
 	ID         string
 	Label      string
 	PriceDelta float64
+}
+
+type parsedOptionGroup struct {
+	Heading       string
+	IsRequired    bool
+	RequiredCount int
+	OptionIDs     []string
+	Defaults      []string
 }
 
 func parseItemPageHTML(htmlStr string) (parsedItemForm, error) {
@@ -2932,6 +3203,7 @@ func parseItemPageHTML(htmlStr string) (parsedItemForm, error) {
 
 	var form parsedItemForm
 	form.Options = []parsedItemOption{}
+	form.Groups = []parsedOptionGroup{}
 
 	var f func(*nethtml.Node)
 	f = func(n *nethtml.Node) {
@@ -2946,6 +3218,74 @@ func parseItemPageHTML(htmlStr string) (parsedItemForm, error) {
 			}
 			if name == "csrf-token" {
 				form.CSRFToken = content
+			}
+		}
+
+		if n.Type == nethtml.ElementNode {
+			isOptGroup := false
+			for _, a := range n.Attr {
+				if a.Key == "class" && strings.Contains(a.Val, "option-group") {
+					isOptGroup = true
+					break
+				}
+			}
+
+			if isOptGroup {
+				var group parsedOptionGroup
+				h3Text := findHeadingText(n)
+				group.Heading = h3Text
+				if strings.Contains(strings.ToLower(h3Text), "required") {
+					group.IsRequired = true
+					group.RequiredCount = 1 // default
+					if idx := strings.Index(h3Text, "(Required:"); idx != -1 {
+						sub := h3Text[idx+len("(Required:"):]
+						if end := strings.Index(sub, ")"); end != -1 {
+							group.RequiredCount, _ = strconv.Atoi(strings.TrimSpace(sub[:end]))
+						}
+					}
+				}
+				if group.RequiredCount == 0 {
+					group.RequiredCount = findRequiredCountFromSpans(n)
+					if group.RequiredCount > 0 {
+						group.IsRequired = true
+					}
+				}
+
+				var findInputs func(*nethtml.Node)
+				findInputs = func(node *nethtml.Node) {
+					if node.Type == nethtml.ElementNode && node.Data == "input" {
+						var name, val string
+						isChecked := false
+						for _, a := range node.Attr {
+							if a.Key == "name" {
+								name = a.Val
+							} else if a.Key == "value" {
+								val = a.Val
+							} else if a.Key == "checked" {
+								isChecked = true
+							}
+						}
+						if name == "info[options][]" {
+							group.OptionIDs = append(group.OptionIDs, val)
+							if isChecked {
+								group.Defaults = append(group.Defaults, val)
+							}
+							opt := parsedItemOption{ID: val}
+							if node.Parent != nil {
+								text := getNodeText(node.Parent)
+								opt.Label = text
+								opt.PriceDelta = parsePriceDelta(text)
+							}
+							form.Options = append(form.Options, opt)
+						}
+					}
+					for c := node.FirstChild; c != nil; c = c.NextSibling {
+						findInputs(c)
+					}
+				}
+				findInputs(n)
+				form.Groups = append(form.Groups, group)
+				return
 			}
 		}
 
@@ -2972,16 +3312,6 @@ func parseItemPageHTML(htmlStr string) (parsedItemForm, error) {
 					form.CSRFToken = val
 				}
 			}
-
-			if name == "info[options][]" {
-				opt := parsedItemOption{ID: val}
-				if n.Parent != nil {
-					text := getNodeText(n.Parent)
-					opt.Label = text
-					opt.PriceDelta = parsePriceDelta(text)
-				}
-				form.Options = append(form.Options, opt)
-			}
 		}
 
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -2991,6 +3321,67 @@ func parseItemPageHTML(htmlStr string) (parsedItemForm, error) {
 	f(doc)
 
 	return form, nil
+}
+
+func findHeadingText(n *nethtml.Node) string {
+	var val string
+	var f func(*nethtml.Node)
+	f = func(node *nethtml.Node) {
+		if node.Type == nethtml.ElementNode && (node.Data == "h3" || node.Data == "h2" || node.Data == "h4") {
+			val = getNodeText(node)
+			return
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+			if val != "" {
+				return
+			}
+		}
+	}
+	f(n)
+	return val
+}
+
+func normalizeEventID(eventID string) string {
+	eventID = strings.TrimSpace(eventID)
+	if isNumeric(eventID) {
+		return "S" + eventID
+	}
+	if strings.Contains(eventID, "/select_events/") {
+		parts := strings.Split(eventID, "/select_events/")
+		if len(parts) > 1 {
+			sID := strings.Split(parts[1], "/")[0]
+			if isNumeric(sID) {
+				return "S" + sID
+			}
+			return sID
+		}
+	}
+	return eventID
+}
+
+func resolveVendorName(vendorID any, vendors []struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}) string {
+	if vendorID == nil {
+		return "Unknown"
+	}
+	var idInt int
+	switch v := vendorID.(type) {
+	case float64:
+		idInt = int(v)
+	case string:
+		idInt, _ = strconv.Atoi(v)
+	case int:
+		idInt = v
+	}
+	for _, vend := range vendors {
+		if vend.ID == idInt {
+			return vend.Name
+		}
+	}
+	return fmt.Sprintf("Vendor #%d", idInt)
 }
 
 func parsePriceDelta(text string) float64 {
@@ -3271,4 +3662,260 @@ func getCartAndPricing(ctx context.Context, c *client.Client) ([]map[string]any,
 	}
 
 	return cartEnvelope.Data.Items, priceEnvelope.Data.Pricing, nil
+}
+
+func extractNumericEventID(htmlStr string) string {
+	reg := regexp.MustCompile(`name="info\[parent_id\]"\s+value="(\d+)"`)
+	m := reg.FindStringSubmatch(htmlStr)
+	if len(m) >= 2 {
+		return m[1]
+	}
+	reg2 := regexp.MustCompile(`value="(\d+)"[^>]*name="info\[parent_id\]"`)
+	m2 := reg2.FindStringSubmatch(htmlStr)
+	if len(m2) >= 2 {
+		return m2[1]
+	}
+	doc, err := nethtml.Parse(strings.NewReader(htmlStr))
+	if err == nil {
+		var val string
+		var f func(*nethtml.Node)
+		f = func(n *nethtml.Node) {
+			if n.Type == nethtml.ElementNode && n.Data == "input" {
+				var name, value string
+				for _, a := range n.Attr {
+					if a.Key == "name" {
+						name = a.Val
+					} else if a.Key == "value" {
+						value = a.Val
+					}
+				}
+				if name == "info[parent_id]" {
+					val = value
+					return
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				f(c)
+				if val != "" {
+					return
+				}
+			}
+		}
+		f(doc)
+		if val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+// resolveSelectEventID maps an event reference (S-id, URL, or numeric id as shown in
+// searchPublicEvents) to the numeric select-event id the API expects. The id in the URL
+// (S609639) is not the select-event id (608639), so it is looked up from the event list
+// by URL instead of derived arithmetically.
+func resolveSelectEventID(ctx context.Context, c *client.Client, flags *rootFlags, ref string) (string, error) {
+	sid := ref
+	if u, err := url.Parse(ref); err == nil && u.Path != "" && strings.Contains(u.Path, "/select_events/") {
+		sid = strings.Split(strings.Split(u.Path, "/select_events/")[1], "/")[0]
+	}
+	sid = strings.TrimPrefix(strings.TrimPrefix(sid, "S"), "s")
+	if !isNumeric(sid) {
+		return "", usageErr(fmt.Errorf("invalid event reference %q: use an S-id such as S609639 or an event URL", ref))
+	}
+	acct, bldg, err := getAccountAndBuilding(ctx, c, flags)
+	if err != nil {
+		return "", err
+	}
+
+	// First try direct HTML items page parsing (Item 1)
+	eventPath := fmt.Sprintf("/accounts/%s/select_events/S%s/items", acct, sid)
+	rawPage, err := c.GetHTML(ctx, eventPath)
+	if err == nil {
+		numID := extractNumericEventID(string(rawPage))
+		if numID != "" {
+			return numID, nil
+		}
+	}
+
+	variables := map[string]any{
+		"input": map[string]any{
+			"statuses":      []string{"ACTIVE", "PROPOSED"},
+			"productTypes":  []string{"POPUP", "CAFE", "DELIVERY"},
+			"accountId":     acct,
+			"buildingId":    bldg,
+			"endTimeAfter":  time.Now().AddDate(0, 0, -1).Format("2006-01-02"),
+			"endTimeBefore": time.Now().AddDate(0, 0, 45).Format("2006-01-02"),
+		},
+	}
+	raw, err := c.Query(ctx, client.SearchPublicEventsQuery, variables)
+	if err != nil {
+		return "", err
+	}
+	events, err := parseEventsFromRaw(raw)
+	if err != nil {
+		return "", err
+	}
+	for _, ev := range events {
+		if strings.Contains(ev.URL, "/select_events/S"+sid+"/") || strings.HasSuffix(ev.URL, "/select_events/S"+sid) {
+			return ev.ID, nil
+		}
+	}
+	return sid, nil
+}
+
+func printCartItemsAndPricing(w io.Writer, items []map[string]any, pricing any, vendors []struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}, flags *rootFlags) error {
+	type formattedCartItem struct {
+		Name     string   `json:"name"`
+		Quantity int      `json:"quantity"`
+		Price    string   `json:"price"`
+		Vendor   string   `json:"vendor"`
+		Options  []string `json:"options"`
+	}
+
+	var formattedItems []formattedCartItem
+	for _, it := range items {
+		name, _ := it["name"].(string)
+		qty := 1
+		if q, ok := it["quantity"].(float64); ok {
+			qty = int(q)
+		} else if q, ok := it["quantity"].(int); ok {
+			qty = q
+		}
+
+		priceCents := 0
+		if pc, ok := it["price_cents"].(float64); ok {
+			priceCents = int(pc)
+		} else if pc, ok := it["price_cents"].(int); ok {
+			priceCents = pc
+		}
+
+		vendorID := it["vendor_id"]
+		vendorName := resolveVendorName(vendorID, vendors)
+
+		var opts []string
+		if rawOpts, ok := it["options"].([]any); ok {
+			for _, o := range rawOpts {
+				if optMap, ok := o.(map[string]any); ok {
+					if optName, ok := optMap["name"].(string); ok {
+						opts = append(opts, optName)
+					}
+				}
+			}
+		}
+
+		formattedItems = append(formattedItems, formattedCartItem{
+			Name:     name,
+			Quantity: qty,
+			Price:    fmt.Sprintf("$%.2f", float64(priceCents)/100.0),
+			Vendor:   vendorName,
+			Options:  opts,
+		})
+	}
+
+	if flags.asJSON {
+		out := map[string]any{
+			"items":   formattedItems,
+			"pricing": pricing,
+		}
+		return printJSONFiltered(w, out, flags)
+	}
+
+	fmt.Fprintln(w, "Cart Items:")
+	for _, it := range formattedItems {
+		optsStr := ""
+		if len(it.Options) > 0 {
+			optsStr = " [" + strings.Join(it.Options, ", ") + "]"
+		}
+		fmt.Fprintf(w, "  - %dx %s (%s, Vendor: %s)%s\n", it.Quantity, it.Name, it.Price, it.Vendor, optsStr)
+	}
+	if len(formattedItems) == 0 {
+		fmt.Fprintln(w, "  (Cart is empty)")
+	}
+
+	pMap, ok := pricing.(map[string]any)
+	if !ok {
+		raw, _ := json.Marshal(pricing)
+		_ = json.Unmarshal(raw, &pMap)
+	}
+
+	fmt.Fprintln(w, "\nPricing Summary:")
+	if pMap != nil {
+		fmt.Fprintf(w, "  Subtotal:     $%.2f\n", getFloatCents(pMap["subtotal_cents"])/100.0)
+		fmt.Fprintf(w, "  Tax:          $%.2f\n", getFloatCents(pMap["tax_cents"])/100.0)
+		fmt.Fprintf(w, "  Delivery Fee: $%.2f\n", getFloatCents(pMap["delivery_fee_cents"])/100.0)
+		fmt.Fprintf(w, "  Subsidy:      -$%.2f (Code: %v)\n", getFloatCents(pMap["subsidy_cents"])/100.0, pMap["subsidy_code"])
+		fmt.Fprintf(w, "  Total Paid:   $%.2f\n", getFloatCents(pMap["total_cents"])/100.0)
+	}
+
+	return nil
+}
+
+func getFloatCents(v any) float64 {
+	if v == nil {
+		return 0.0
+	}
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case string:
+		f, _ := strconv.ParseFloat(val, 64)
+		return f
+	}
+	return 0.0
+}
+
+func findRequiredCountFromSpans(n *nethtml.Node) int {
+	var count int
+	var f func(*nethtml.Node)
+	f = func(node *nethtml.Node) {
+		if node.Type == nethtml.ElementNode && node.Data == "span" {
+			txt := getNodeText(node)
+			if idx := strings.Index(txt, "(Required:"); idx != -1 {
+				sub := txt[idx+len("(Required:"):]
+				if end := strings.Index(sub, ")"); end != -1 {
+					count, _ = strconv.Atoi(strings.TrimSpace(sub[:end]))
+					return
+				}
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+			if count > 0 {
+				return
+			}
+		}
+	}
+	f(n)
+	return count
+}
+
+func formatGroupChoices(g parsedOptionGroup, allOpts []parsedItemOption) string {
+	var lines []string
+	for _, id := range g.OptionIDs {
+		for _, o := range allOpts {
+			if o.ID == id {
+				lines = append(lines, fmt.Sprintf("  - ID: %s, Label: %s", o.ID, strings.TrimSpace(o.Label)))
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// redactedFormPreview encodes a form for display with the CSRF token masked so previews
+// are safe to paste into logs and agent transcripts.
+func redactedFormPreview(v url.Values) string {
+	masked := url.Values{}
+	for k, vals := range v {
+		if k == "authenticity_token" {
+			masked[k] = []string{"REDACTED"}
+			continue
+		}
+		masked[k] = vals
+	}
+	return masked.Encode()
 }
