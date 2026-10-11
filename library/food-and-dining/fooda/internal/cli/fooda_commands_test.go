@@ -1212,3 +1212,22 @@ func TestOrderPlacePlainTextPreviewPricing(t *testing.T) {
 		t.Errorf("missing expected total paid $14.49, got: %s", out)
 	}
 }
+
+func TestCartItemPriceString(t *testing.T) {
+	cases := []struct {
+		name string
+		in   map[string]any
+		want string
+	}{
+		{"cents float", map[string]any{"price_cents": float64(1999)}, "$19.99"},
+		{"cents zero is real zero", map[string]any{"price_cents": float64(0)}, "$0.00"},
+		{"legacy string", map[string]any{"price": "10.00"}, "$10.00"},
+		{"legacy number", map[string]any{"price": 12.5}, "$12.50"},
+		{"missing", map[string]any{}, "price unavailable"},
+	}
+	for _, tc := range cases {
+		if got := cartItemPriceString(tc.in); got != tc.want {
+			t.Errorf("%s: got %q want %q", tc.name, got, tc.want)
+		}
+	}
+}

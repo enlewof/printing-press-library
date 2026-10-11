@@ -1784,12 +1784,6 @@ func init() {
 							} else if q, ok := it["quantity"].(int); ok {
 								qty = q
 							}
-							priceCents := 0
-							if pc, ok := it["price_cents"].(float64); ok {
-								priceCents = int(pc)
-							} else if pc, ok := it["price_cents"].(int); ok {
-								priceCents = pc
-							}
 							var opts []string
 							if rawOpts, ok := it["options"].([]any); ok {
 								for _, o := range rawOpts {
@@ -1803,7 +1797,7 @@ func init() {
 							formattedItems = append(formattedItems, formattedCartItem{
 								Name:     name,
 								Quantity: qty,
-								Price:    fmt.Sprintf("$%.2f", float64(priceCents)/100.0),
+								Price:    cartItemPriceString(it),
 								Vendor:   resolveVendorName(it["vendor_id"], ev.Vendors),
 								Options:  opts,
 							})
@@ -3833,49 +3827,7 @@ func printCartItemsAndPricing(w io.Writer, items []map[string]any, pricing any, 
 			qty = q
 		}
 
-		priceStr := ""
-		hasPrice := false
-
-		if pc, ok := it["price_cents"]; ok && pc != nil {
-			var cents int
-			switch v := pc.(type) {
-			case float64:
-				cents = int(v)
-				hasPrice = true
-			case int:
-				cents = v
-				hasPrice = true
-			}
-			if hasPrice {
-				priceStr = fmt.Sprintf("$%.2f", float64(cents)/100.0)
-			}
-		}
-
-		if !hasPrice {
-			if p, ok := it["price"]; ok && p != nil {
-				switch v := p.(type) {
-				case string:
-					v = strings.TrimSpace(v)
-					if v != "" {
-						vClean := strings.ReplaceAll(v, "$", "")
-						if val, err := strconv.ParseFloat(vClean, 64); err == nil {
-							priceStr = fmt.Sprintf("$%.2f", val)
-							hasPrice = true
-						}
-					}
-				case float64:
-					priceStr = fmt.Sprintf("$%.2f", v)
-					hasPrice = true
-				case int:
-					priceStr = fmt.Sprintf("$%.2f", float64(v))
-					hasPrice = true
-				}
-			}
-		}
-
-		if !hasPrice {
-			priceStr = "price unavailable"
-		}
+		priceStr := cartItemPriceString(it)
 
 		vendorID := it["vendor_id"]
 		vendorName := resolveVendorName(vendorID, vendors)
@@ -4003,4 +3955,27 @@ func redactedFormPreview(v url.Values) string {
 		masked[k] = vals
 	}
 	return masked.Encode()
+}
+
+// cartItemPriceString renders a cart line price from either price_cents (integer cents) or the
+// legacy price field (dollars as string or number). A missing price is reported as unavailable
+// rather than silently shown as $0.00.
+func cartItemPriceString(it map[string]any) string {
+	switch v := it["price_cents"].(type) {
+	case float64:
+		return fmt.Sprintf("$%.2f", v/100.0)
+	case int:
+		return fmt.Sprintf("$%.2f", float64(v)/100.0)
+	}
+	switch v := it["price"].(type) {
+	case string:
+		if f, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(v), "$", ""), 64); err == nil {
+			return fmt.Sprintf("$%.2f", f)
+		}
+	case float64:
+		return fmt.Sprintf("$%.2f", v)
+	case int:
+		return fmt.Sprintf("$%.2f", float64(v))
+	}
+	return "price unavailable"
 }
