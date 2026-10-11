@@ -1664,6 +1664,13 @@ func init() {
 					return apiErr(fmt.Errorf("pricing total_cents is missing, null, or negative in response"))
 				}
 
+				var pricingMap struct {
+					Data struct {
+						Pricing any `json:"pricing"`
+					} `json:"data"`
+				}
+				_ = json.Unmarshal(rawPrice, &pricingMap)
+
 				rawItems, statusCode, err := makeAPIRequest(ctx, c, "GET", "/api/v1/cart/items", nil, "")
 				if err != nil {
 					return apiErr(err)
@@ -1835,7 +1842,7 @@ func init() {
 
 				if !orderPlaceConfirm {
 					fmt.Fprintln(cmd.OutOrStdout(), "=== Order Placement Preview ===")
-					_ = printCartItemsAndPricing(cmd.OutOrStdout(), cartEnvelope.Data.Items, priceEnvelope.Data.Pricing, ev.Vendors, flags)
+					_ = printCartItemsAndPricing(cmd.OutOrStdout(), cartEnvelope.Data.Items, pricingMap.Data.Pricing, ev.Vendors, flags)
 					fmt.Fprintf(cmd.OutOrStdout(), "\nDelivery Time:         %s\n", ev.DeliveryTime)
 					fmt.Fprintf(cmd.OutOrStdout(), "Ordering Window Ends:  %s\n", ev.OrderingWindowEndTime)
 					fmt.Fprintf(cmd.OutOrStdout(), "Location ID:           %d\n", locationID)
@@ -3492,11 +3499,30 @@ func getUpcomingEvent(ctx context.Context, c *client.Client, flags *rootFlags) (
 	if len(earliestEvents) > 1 {
 		var ids []string
 		for _, ev := range earliestEvents {
-			ids = append(ids, "S"+ev.ID)
+			sID, err := extractSIdFromURL(ev.URL)
+			if err != nil {
+				sID = "S" + ev.ID
+			}
+			ids = append(ids, sID)
 		}
 		return "", fmt.Errorf("ambiguous upcoming events on %s: %s; please specify --event explicitly", firstTime.Format("2006-01-02"), strings.Join(ids, ", "))
 	}
-	return "S" + earliestEvents[0].ID, nil
+	return extractSIdFromURL(earliestEvents[0].URL)
+}
+
+func extractSIdFromURL(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Path == "" {
+		return "", fmt.Errorf("invalid event URL: %q", rawURL)
+	}
+	parts := strings.Split(u.Path, "/select_events/")
+	if len(parts) > 1 {
+		sID := strings.Split(parts[1], "/")[0]
+		if sID != "" {
+			return sID, nil
+		}
+	}
+	return "", fmt.Errorf("no S-id found in event URL %q", rawURL)
 }
 
 func formatOptions(opts []parsedItemOption) string {

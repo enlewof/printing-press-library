@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1050,5 +1051,164 @@ func TestPrintCartItemsAndPricingPriceFormat(t *testing.T) {
 	}
 	if !strings.Contains(out, "Item with unavailable price (price unavailable") {
 		t.Errorf("expected format for unavailable price, got: %s", out)
+	}
+}
+
+func TestOrderPlaceNoEventEndToEnd(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("FOODA_HOME", tempHome)
+
+	var receivedPost []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if r.URL.Path == "/my" {
+			_, _ = w.Write([]byte(`<html><head><meta name="api-client-token" content="dummy-client-token"><meta name="api-session-token" content="dummy-session-token"></head></html>`))
+			return
+		}
+		if r.URL.Path == "/graphql" {
+			// Mock searchPublicEvents response
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"searchPublicEvents": {
+						"events": {
+							"nodes": [
+								{
+									"id": "608639",
+									"startTime": "2026-10-15T12:00:00Z",
+									"endTime": "2026-10-15T13:00:00Z",
+									"status": "ACTIVE",
+									"__typename": "DeliveryEventPublic",
+									"url": "https://app.fooda.com/accounts/8358/select_events/S609639/items",
+									"deliveryWindow": {
+										"startTime": "2026-10-15T12:00:00Z"
+									}
+								}
+							]
+						}
+					}
+				}
+			}`))
+			return
+		}
+		if r.URL.Path == "/api/v2/select_events/by" {
+			_, _ = w.Write([]byte(`{"select_event":{"id":608639,"locations":[{"id":123}]}}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/cart/items" {
+			_, _ = w.Write([]byte(`{"data":{"items":[{"name":"Taco","price_cents":1000,"quantity":1}]}}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/cart/price" {
+			_, _ = w.Write([]byte(`{"data":{"pricing":{"total_cents": 0}}}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/orders" {
+			body, _ := io.ReadAll(r.Body)
+			receivedPost = body
+			_, _ = w.Write([]byte(`{"data":{"orders":[{"id":9999,"request_id":"uuid-new","status":"placed","delivery_time":"today","subtotal_amount_cents":1000,"subsidy_cents":1000,"total_cents":0,"items":[{"name":"Taco","quantity":1}]}]}}`))
+			return
+		}
+	}))
+	defer server.Close()
+
+	cfg, _ := config.Load("")
+	cfg.BaseURL = server.URL
+	_ = client.New(cfg, 0, 0)
+
+	cmd := RootCmd()
+	cmd.SetArgs([]string{"order", "place", "--confirm", "--account", "over-acct", "--building", "over-bldg"})
+	cfgPath := filepath.Join(tempHome, "config", "fooda_config.json")
+	_ = os.MkdirAll(filepath.Join(tempHome, "config"), 0o700)
+	cfgJSON, _ := json.Marshal(map[string]any{"base_url": server.URL})
+	_ = os.WriteFile(cfgPath, cfgJSON, 0o600)
+	cmd.PersistentFlags().Set("config", cfgPath)
+
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("order place end-to-end failed: %v, stderr: %s", err, stderr.String())
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(receivedPost, &parsed); err != nil {
+		t.Fatalf("failed to parse received POST body: %v", err)
+	}
+	locs, _ := parsed["locations"].([]any)
+	if len(locs) == 0 {
+		t.Fatalf("locations missing from POST body: %s", string(receivedPost))
+	}
+	loc, _ := locs[0].(map[string]any)
+	if fmt.Sprintf("%v", loc["select_event_id"]) != "608639" {
+		t.Errorf("expected select_event_id 608639, got %v", loc["select_event_id"])
+	}
+}
+
+func TestOrderPlacePlainTextPreviewPricing(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("FOODA_HOME", tempHome)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if r.URL.Path == "/my" {
+			_, _ = w.Write([]byte(`<html><head><meta name="api-client-token" content="dummy-client-token"><meta name="api-session-token" content="dummy-session-token"></head></html>`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/select_events/") && strings.Contains(r.URL.Path, "/items") {
+			_, _ = w.Write([]byte(`<html><body><input name="info[parent_id]" value="608639"></body></html>`))
+			return
+		}
+		if r.URL.Path == "/api/v2/select_events/by" {
+			_, _ = w.Write([]byte(`{"select_event":{"id":608639,"locations":[{"id":123}],"vendors":[{"id":1,"name":"Taco Shop"}]}}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/cart/items" {
+			_, _ = w.Write([]byte(`{"data":{"items":[{"name":"Taco","price_cents":1999,"quantity":1,"vendor_id":1}]}}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/cart/price" {
+			// subtotal_cents=1999, tax_cents=150, delivery_fee_cents=300, subsidy_cents=1000, total_cents=1449
+			_, _ = w.Write([]byte(`{"data":{"pricing":{"subtotal_cents":1999,"tax_cents":150,"delivery_fee_cents":300,"subsidy_cents":1000,"total_cents":1449}}}`))
+			return
+		}
+	}))
+	defer server.Close()
+
+	cfg, _ := config.Load("")
+	cfg.BaseURL = server.URL
+	_ = client.New(cfg, 0, 0)
+
+	cmd := RootCmd()
+	cmd.SetArgs([]string{"order", "place", "--event", "S608639", "--account", "over-acct", "--building", "over-bldg", "--allow-charge"})
+	cfgPath := filepath.Join(tempHome, "config", "fooda_config.json")
+	_ = os.MkdirAll(filepath.Join(tempHome, "config"), 0o700)
+	cfgJSON, _ := json.Marshal(map[string]any{"base_url": server.URL})
+	_ = os.WriteFile(cfgPath, cfgJSON, 0o600)
+	cmd.PersistentFlags().Set("config", cfgPath)
+
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("order place preview failed: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Subtotal:     $19.99") {
+		t.Errorf("missing expected subtotal $19.99, got: %s", out)
+	}
+	if !strings.Contains(out, "Tax:          $1.50") {
+		t.Errorf("missing expected tax $1.50, got: %s", out)
+	}
+	if !strings.Contains(out, "Delivery Fee: $3.00") {
+		t.Errorf("missing expected delivery fee $3.00, got: %s", out)
+	}
+	if !strings.Contains(out, "Subsidy:      -$10.00") {
+		t.Errorf("missing expected subsidy -$10.00, got: %s", out)
+	}
+	if !strings.Contains(out, "Total Paid:   $14.49") {
+		t.Errorf("missing expected total paid $14.49, got: %s", out)
 	}
 }
