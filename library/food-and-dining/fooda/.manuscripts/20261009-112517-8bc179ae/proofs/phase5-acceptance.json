@@ -11,7 +11,7 @@
   "auth_context": {
     "type": "cookie"
   },
-  "source_fingerprint": "b7ad5bc8e35caa61e5d5add22724ae01028ccd59e13321b7d0334688b808628e",
+  "source_fingerprint": "c9bef72821d67f4f2e1a20d2a61833c4047b597d9fa8dfb974d51d5dca558e10",
   "source_files": {
     "cmd/fooda-pp-cli/main.go": "e6f96d2e80688e77d5c50e7051e6f109199a19d3a908377ea96c46d46d1a4040",
     "cmd/fooda-pp-mcp/http_auth_test.go": "46cf4aac0bb79c00b73963265b07c517a55556043c9e828ae6c44b6fea9adc60",
@@ -31,8 +31,8 @@
     "internal/cli/deliver_download_test.go": "7495bb76ecfb5e85bb29d4405aeef1dc27b9ac8cb2cde27588a7f2005f3de7d3",
     "internal/cli/doctor.go": "1c11be8ca0b499171eafe8176b78f910f13a1d7c2551159530cc03a6a707d03b",
     "internal/cli/feedback.go": "70b51749a4d35a073dc1f502fc745fea79be9cb8a62352f24db2f6b45cd35b92",
-    "internal/cli/fooda_commands.go": "041513e95b2d506a82ec7c85ddb9c0072d223adf881effb36d48dfbe4ef151c1",
-    "internal/cli/fooda_commands_test.go": "d5c0ab5fcd49a1a54d92a63e1bd604b199193646ceee54423f46c0d36c71329e",
+    "internal/cli/fooda_commands.go": "6bfd8eabc1fa19933f9e2b85171497066990437af21edfda4ee792292b975e6c",
+    "internal/cli/fooda_commands_test.go": "7feaccaddc1069d33f93fbd1721a35f727712dd39233a25fa99831d1485312d1",
     "internal/cli/helpers.go": "93b5a53ca2f8f2e8f819ebcce1878c0f6193c981f4c2d1c7cff4821498629985",
     "internal/cli/html_extract.go": "7a9f9cd7cc70fa2066061549643b6d71095931b0d9366e72051d5b27e522beaf",
     "internal/cli/import.go": "3afeeb5c988a91349de079750d093e5fb1e1b0aac0298ba17457a88bf259d0f0",
@@ -54,6 +54,7 @@
     "internal/cli/promoted_recommendations.go": "f83ade4520ff15c05efd5b7942306e0366e628fe69415a0c242a5f3179553f78",
     "internal/cli/promoted_session.go": "0a7d6837f52d57b465bacf58213802dd951423e5609194737a2d32aea2832934",
     "internal/cli/promoted_subsidies.go": "1323dec03904c7cc4f580bfe9a14b21267d04fc3fa073be2f267aa67cbcbad1d",
+    "internal/cli/redact_preview_test.go": "5c167a18df768608f21858f26c4debc59ae8b6346bc181a3d2debed85f907810",
     "internal/cli/resource_paths.go": "43cb4a0e3abf31c463999051d56711c9751668b4c4b3000a86c036cd29412119",
     "internal/cli/root.go": "18f39698b9053a6ccb56f0229690abaac85d9ac25eb8e9293dd7714f7a619ed4",
     "internal/cli/root_test.go": "719725821af4dc74a0d569e842eb8e24a0e35d85855a80db9b3a22773d6adbf3",

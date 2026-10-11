@@ -667,6 +667,11 @@ func TestMalformedPriceAbortsPlace(t *testing.T) {
 			_, _ = w.Write([]byte(`<html><head><meta name="api-client-token" content="dummy-client-token"><meta name="api-session-token" content="dummy-session-token"></head></html>`))
 			return
 		}
+		if strings.Contains(r.URL.Path, "/select_events/") && strings.Contains(r.URL.Path, "/items") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<html><body><input name="info[parent_id]" value="608348"></body></html>`))
+			return
+		}
 		if r.URL.Path == "/api/v1/orders" {
 			ordersPostCount++
 			w.WriteHeader(http.StatusOK)
@@ -803,8 +808,10 @@ func TestOrderAddOptionAmbiguity(t *testing.T) {
 <html>
 <body>
 <form>
-  <label><input name="info[options][]" value="101">Extra Sauce (+$1.00)</label>
-  <label><input name="info[options][]" value="102">Extra Cheese (+$2.00)</label>
+  <div class="option-group">
+    <label><input name="info[options][]" value="101">Extra Sauce (+$1.00)</label>
+    <label><input name="info[options][]" value="102">Extra Cheese (+$2.00)</label>
+  </div>
 </form>
 </body>
 </html>
@@ -848,5 +855,120 @@ func TestOrderAddOptionAmbiguity(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ambiguous option") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestOrderAddRequiredOptionGroup(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("FOODA_HOME", tempHome)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if strings.Contains(r.URL.Path, "/items/") {
+			// Item details page with required option group (Item 2)
+			_, _ = w.Write([]byte(`
+<html>
+<body>
+<form>
+  <div class="option-group">
+    <div class="required">
+      <h3>1. Spice Level</h3>
+      <span class="required">(Required:1)</span>
+    </div>
+    <label class="checkbox"><input name="info[options][]" value="201" checked="checked">Medium</label>
+    <label class="checkbox"><input name="info[options][]" value="202">Spicy</label>
+  </div>
+</form>
+</body>
+</html>
+			`))
+			return
+		}
+		_, _ = w.Write([]byte(`
+<html>
+<body>
+<div class="item" data-vendor_name="Yum Yubu">
+  <a href="/items/1" class="item__link js-item-show-link">
+    <div class="item__name">Chicken Biryani</div>
+  </a>
+</div>
+</body>
+</html>
+		`))
+	}))
+	defer server.Close()
+
+	cfg, _ := config.Load("")
+	cfg.BaseURL = server.URL
+	_ = client.New(cfg, 0, 0)
+
+	cfgPath := filepath.Join(tempHome, "config", "fooda_config.json")
+	_ = os.MkdirAll(filepath.Join(tempHome, "config"), 0o700)
+	cfgJSON, _ := json.Marshal(map[string]any{"base_url": server.URL})
+	_ = os.WriteFile(cfgPath, cfgJSON, 0o600)
+
+	// Subtest A: no --option -> pre-checked defaults are automatically sent
+	{
+		cmd := RootCmd()
+		cmd.SetArgs([]string{"order", "add", "Chicken Biryani", "--event", "S608348", "--account", "over-acct", "--building", "over-bldg", "--json"})
+		cmd.PersistentFlags().Set("config", cfgPath)
+
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("Subtest A failed: expected no-option default to succeed, got error: %v", err)
+		}
+		out := stdout.String()
+		var parsed map[string]any
+		_ = json.Unmarshal([]byte(out), &parsed)
+		item, _ := parsed["item"].(map[string]any)
+		opts, _ := item["options"].([]any)
+		if len(opts) != 1 || opts[0] != "Medium" {
+			t.Errorf("expected default option 'Medium' in dry-run JSON, got: %v", opts)
+		}
+	}
+
+	// Subtest B: --option Spicy -> replaces default with Spicy
+	{
+		cmd := RootCmd()
+		cmd.SetArgs([]string{"order", "add", "Chicken Biryani", "--event", "S608348", "--option", "Spicy", "--account", "over-acct", "--building", "over-bldg", "--json"})
+		cmd.PersistentFlags().Set("config", cfgPath)
+
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("Subtest B failed: expected option Spicy to succeed, got error: %v", err)
+		}
+		out := stdout.String()
+		var parsed map[string]any
+		_ = json.Unmarshal([]byte(out), &parsed)
+		item, _ := parsed["item"].(map[string]any)
+		opts, _ := item["options"].([]any)
+		if len(opts) != 1 || opts[0] != "Spicy" {
+			t.Errorf("expected option 'Spicy' in dry-run JSON, got: %v", opts)
+		}
+	}
+
+	// Subtest C: invalid (too many choices selected for Required:1)
+	{
+		cmd := RootCmd()
+		cmd.SetArgs([]string{"order", "add", "Chicken Biryani", "--event", "S608348", "--option", "Medium", "--option", "Spicy", "--account", "over-acct", "--building", "over-bldg"})
+		cmd.PersistentFlags().Set("config", cfgPath)
+
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("Subtest C expected error for choosing multiple options on Required:1 group, but it succeeded")
+		}
+		if !strings.Contains(err.Error(), "invalid number of options selected") {
+			t.Errorf("unexpected error message: %v", err)
+		}
 	}
 }
