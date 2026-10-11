@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -970,5 +971,84 @@ func TestOrderAddRequiredOptionGroup(t *testing.T) {
 		if !strings.Contains(err.Error(), "invalid number of options selected") {
 			t.Errorf("unexpected error message: %v", err)
 		}
+	}
+}
+
+func TestSecurityFirstNoCapturedTokens(t *testing.T) {
+	files, err := filepath.Glob("../client/testdata/*.html")
+	if err != nil {
+		t.Fatalf("failed to glob testdata: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("no testdata files found")
+	}
+
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", path, err)
+		}
+		content := string(data)
+
+		regMeta := regexp.MustCompile(`name="api-(?:session|client)-token"\s+content="([^"]+)"`)
+		for _, m := range regMeta.FindAllStringSubmatch(content, -1) {
+			token := m[1]
+			if !strings.HasPrefix(strings.ToUpper(token), "DUMMY") {
+				t.Errorf("file %s contains non-dummy meta token: %q", path, token)
+			}
+		}
+
+		regAuthToken := regexp.MustCompile(`name="authenticity_token"\s+value="([^"]+)"`)
+		for _, m := range regAuthToken.FindAllStringSubmatch(content, -1) {
+			token := m[1]
+			if !strings.HasPrefix(strings.ToUpper(token), "DUMMY") {
+				t.Errorf("file %s contains non-dummy authenticity_token: %q", path, token)
+			}
+		}
+
+		regCSRF := regexp.MustCompile(`name="csrf-token"\s+content="([^"]+)"`)
+		for _, m := range regCSRF.FindAllStringSubmatch(content, -1) {
+			token := m[1]
+			if !strings.HasPrefix(strings.ToUpper(token), "DUMMY") {
+				t.Errorf("file %s contains non-dummy csrf-token: %q", path, token)
+			}
+		}
+	}
+}
+
+func TestPrintCartItemsAndPricingPriceFormat(t *testing.T) {
+	items := []map[string]any{
+		{"name": "Item with price_cents", "price_cents": 1599.0, "quantity": 1},
+		{"name": "Item with legacy string price", "price": "10.00", "quantity": 1},
+		{"name": "Item with legacy number price", "price": 5.99, "quantity": 1},
+		{"name": "Item with unavailable price", "quantity": 1},
+	}
+
+	var stdout bytes.Buffer
+	err := printCartItemsAndPricing(&stdout, items, map[string]any{
+		"subtotal_cents":     1000,
+		"tax_cents":          100,
+		"delivery_fee_cents": 200,
+		"subsidy_cents":      500,
+		"subsidy_code":       "TEST",
+		"total_cents":        800,
+	}, nil, &rootFlags{})
+
+	if err != nil {
+		t.Fatalf("printCartItemsAndPricing failed: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Item with price_cents ($15.99") {
+		t.Errorf("expected format for price_cents, got: %s", out)
+	}
+	if !strings.Contains(out, "Item with legacy string price ($10.00") {
+		t.Errorf("expected format for legacy string price, got: %s", out)
+	}
+	if !strings.Contains(out, "Item with legacy number price ($5.99") {
+		t.Errorf("expected format for legacy number price, got: %s", out)
+	}
+	if !strings.Contains(out, "Item with unavailable price (price unavailable") {
+		t.Errorf("expected format for unavailable price, got: %s", out)
 	}
 }

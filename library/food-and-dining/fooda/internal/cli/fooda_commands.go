@@ -1294,7 +1294,10 @@ func init() {
 					}
 
 					// Read initial cart items
-					initialItems, _, _ := getCartAndPricing(ctx, c)
+					initialItems, _, err := getCartAndPricing(ctx, c)
+					if err != nil {
+						return apiErr(err)
+					}
 					initialCount := 0
 					for _, it := range initialItems {
 						if q, ok := it["quantity"].(float64); ok {
@@ -1404,7 +1407,10 @@ func init() {
 				}
 
 				// Read initial cart items
-				initialItems, _, _ := getCartAndPricing(ctx, c)
+				initialItems, _, err := getCartAndPricing(ctx, c)
+				if err != nil {
+					return apiErr(err)
+				}
 				initialCount := 0
 				for _, it := range initialItems {
 					if q, ok := it["quantity"].(float64); ok {
@@ -1639,7 +1645,15 @@ func init() {
 				var priceEnvelope struct {
 					Data struct {
 						Pricing struct {
-							TotalCents *int `json:"total_cents"`
+							SubtotalCents        *int   `json:"subtotal_cents"`
+							TaxCents             *int   `json:"tax_cents"`
+							DeliveryFeeCents     *int   `json:"delivery_fee_cents"`
+							SubsidyCents         *int   `json:"subsidy_cents"`
+							SubsidyCode          string `json:"subsidy_code"`
+							PromotionCents       *int   `json:"promotion_cents"`
+							GratuityCents        *int   `json:"gratuity_cents"`
+							TotalCents           *int   `json:"total_cents"`
+							TotalCommissionCents *int   `json:"total_commission_cents"`
 						} `json:"pricing"`
 					} `json:"data"`
 				}
@@ -3714,6 +3728,14 @@ func extractNumericEventID(htmlStr string) string {
 // (S609639) is not the select-event id (608639), so it is looked up from the event list
 // by URL instead of derived arithmetically.
 func resolveSelectEventID(ctx context.Context, c *client.Client, flags *rootFlags, ref string) (string, error) {
+	if strings.HasPrefix(strings.ToLower(ref), "id:") {
+		numID := strings.TrimPrefix(strings.ToLower(ref), "id:")
+		if isNumeric(numID) {
+			return numID, nil
+		}
+		return "", usageErr(fmt.Errorf("invalid numeric select_event id: %s", numID))
+	}
+
 	sid := ref
 	if u, err := url.Parse(ref); err == nil && u.Path != "" && strings.Contains(u.Path, "/select_events/") {
 		sid = strings.Split(strings.Split(u.Path, "/select_events/")[1], "/")[0]
@@ -3760,7 +3782,7 @@ func resolveSelectEventID(ctx context.Context, c *client.Client, flags *rootFlag
 			return ev.ID, nil
 		}
 	}
-	return sid, nil
+	return "", notFoundErr(fmt.Errorf("select event S%s not found among upcoming events for this building", sid))
 }
 
 func printCartItemsAndPricing(w io.Writer, items []map[string]any, pricing any, vendors []struct {
@@ -3785,11 +3807,48 @@ func printCartItemsAndPricing(w io.Writer, items []map[string]any, pricing any, 
 			qty = q
 		}
 
-		priceCents := 0
-		if pc, ok := it["price_cents"].(float64); ok {
-			priceCents = int(pc)
-		} else if pc, ok := it["price_cents"].(int); ok {
-			priceCents = pc
+		priceStr := ""
+		hasPrice := false
+
+		if pc, ok := it["price_cents"]; ok && pc != nil {
+			var cents int
+			switch v := pc.(type) {
+			case float64:
+				cents = int(v)
+				hasPrice = true
+			case int:
+				cents = v
+				hasPrice = true
+			}
+			if hasPrice {
+				priceStr = fmt.Sprintf("$%.2f", float64(cents)/100.0)
+			}
+		}
+
+		if !hasPrice {
+			if p, ok := it["price"]; ok && p != nil {
+				switch v := p.(type) {
+				case string:
+					v = strings.TrimSpace(v)
+					if v != "" {
+						vClean := strings.ReplaceAll(v, "$", "")
+						if val, err := strconv.ParseFloat(vClean, 64); err == nil {
+							priceStr = fmt.Sprintf("$%.2f", val)
+							hasPrice = true
+						}
+					}
+				case float64:
+					priceStr = fmt.Sprintf("$%.2f", v)
+					hasPrice = true
+				case int:
+					priceStr = fmt.Sprintf("$%.2f", float64(v))
+					hasPrice = true
+				}
+			}
+		}
+
+		if !hasPrice {
+			priceStr = "price unavailable"
 		}
 
 		vendorID := it["vendor_id"]
@@ -3809,7 +3868,7 @@ func printCartItemsAndPricing(w io.Writer, items []map[string]any, pricing any, 
 		formattedItems = append(formattedItems, formattedCartItem{
 			Name:     name,
 			Quantity: qty,
-			Price:    fmt.Sprintf("$%.2f", float64(priceCents)/100.0),
+			Price:    priceStr,
 			Vendor:   vendorName,
 			Options:  opts,
 		})
