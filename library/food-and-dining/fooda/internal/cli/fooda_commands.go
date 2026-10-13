@@ -1887,9 +1887,12 @@ func init() {
 		orderPlanCmd := &cobra.Command{
 			Use:   "plan",
 			Short: "Suggest a budget-optimized add-on item for an event",
+			// The Phase 5 live gate runs this example as written, so it must name an event
+			// that is still live. Events expire: refresh the id (from `events`) and an item
+			// (from `menu`) before re-running the gate.
 			Example: strings.Trim(`
-  # Plan order with $20 budget and 'Beef Bulgogi Bowl' as anchor
-  fooda-pp-cli order plan --event S609348 --budget 20 --anchor "Beef Bulgogi Bowl"
+  # Plan order with $20 budget and 'Chicken Salad' as anchor
+  fooda-pp-cli order plan --event S610441 --budget 20 --anchor "Chicken Salad"
 `, "\n"),
 			Annotations: map[string]string{"pp:data-source": "live", "mcp:read-only": "true", "pp:happy-args": "event=S609348,anchor=Beef Bulgogi Bowl"},
 			RunE: func(cmd *cobra.Command, args []string) error {
