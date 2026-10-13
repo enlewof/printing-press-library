@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -107,26 +108,27 @@ func deliveryRowsForDate(orders []client.PastOrdersProps, target string) []deliv
 	return rows
 }
 
-// loadPastOrders reads order history from the live orders page, or from the
-// synced store when --data-source local. The client is only built for the live
-// path so local reads work without a session.
-func loadPastOrders(ctx context.Context, flags *rootFlags) ([]client.PastOrdersProps, error) {
-	if flags.dataSource == "local" {
-		db, err := store.OpenReadOnlyContext(ctx, defaultDBPath("fooda-pp-cli"))
-		if err != nil || db == nil {
-			return nil, notFoundErr(fmt.Errorf("local database not found; run 'sync' first to populate local orders"))
-		}
-		defer db.Close()
-		orders, err := loadAndDeduplicateOrders(db)
-		if err != nil {
-			return nil, err
-		}
-		if len(orders) == 0 {
-			return nil, notFoundErr(fmt.Errorf("no synced orders found; run 'sync' first to populate local orders"))
-		}
-		return orders, nil
+// loadSyncedOrders reads order history from the synced store. A store that
+// exists but holds no orders is a valid empty history (a sync can legitimately
+// find none); only a missing store is an error. syncedAt is zero when no sync
+// time was recorded.
+func loadSyncedOrders(ctx context.Context) (orders []client.PastOrdersProps, syncedAt time.Time, err error) {
+	db, err := store.OpenReadOnlyContext(ctx, defaultDBPath("fooda-pp-cli"))
+	if err != nil || db == nil {
+		return nil, time.Time{}, notFoundErr(fmt.Errorf("local database not found; run 'sync' first to populate local orders"))
 	}
+	defer db.Close()
+	orders, err = loadAndDeduplicateOrders(db)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if _, at, _, stateErr := db.GetSyncState("order"); stateErr == nil {
+		syncedAt = at
+	}
+	return orders, syncedAt, nil
+}
 
+func loadLiveOrders(ctx context.Context, flags *rootFlags) ([]client.PastOrdersProps, error) {
 	c, err := flags.newClient()
 	if err != nil {
 		return nil, err
@@ -145,6 +147,38 @@ func loadPastOrders(ctx context.Context, flags *rootFlags) ([]client.PastOrdersP
 	return []client.PastOrdersProps{*props}, nil
 }
 
+// loadPastOrders reads order history from the live orders page, or from the
+// synced store with --data-source local. With --data-source auto a network
+// failure falls back to the synced store, warns on warn, and marks the result
+// local; other failures (auth, HTTP errors) are not papered over with old data.
+// The client is only built for the live path so local reads work without a
+// session.
+func loadPastOrders(ctx context.Context, flags *rootFlags, warn io.Writer) ([]client.PastOrdersProps, error) {
+	if flags.dataSource == "local" {
+		orders, _, err := loadSyncedOrders(ctx)
+		return orders, err
+	}
+
+	orders, err := loadLiveOrders(ctx, flags)
+	if err == nil || flags.dataSource == "live" || !isNetworkError(err) {
+		return orders, err
+	}
+
+	synced, syncedAt, localErr := loadSyncedOrders(ctx)
+	if localErr != nil {
+		return nil, fmt.Errorf("live fetch failed: %w (no local database fallback available)", err)
+	}
+	// Delivery state is a snapshot: an order synced as scheduled may be
+	// delivered by now, so say how old the data is.
+	msg := fmt.Sprintf("warning: live fetch failed (%v); falling back to local database", err)
+	if !syncedAt.IsZero() {
+		msg += fmt.Sprintf("; orders last synced %s, so delivery state may be out of date", syncedAt.Local().Format("2006-01-02 15:04"))
+	}
+	fmt.Fprintln(warn, msg)
+	flags.agentSource = "local"
+	return synced, nil
+}
+
 func init() {
 	registerNovelCommand(func(rootCmd *cobra.Command, flags *rootFlags) {
 		var date string
@@ -159,6 +193,9 @@ the My Fooda page then jumps ahead with no status, so a missing event does not m
 there was no order. This reads the most recent page of order history instead and
 reports each order on the date as delivered, scheduled, or unknown (delivery text it
 does not recognize is kept verbatim). --date is matched against your local calendar.
+
+If the network is unreachable, --data-source auto falls back to your last sync (run
+'sync' to populate it); synced delivery state can be out of date.
 `, "\n"),
 			Example: strings.Trim(`
   fooda-pp-cli delivery-status
@@ -178,7 +215,7 @@ does not recognize is kept verbatim). --date is matched against your local calen
 				ctx, cancel := boundCtx(cmd.Context(), flags)
 				defer cancel()
 
-				orders, err := loadPastOrders(ctx, flags)
+				orders, err := loadPastOrders(ctx, flags, cmd.ErrOrStderr())
 				if err != nil {
 					return err
 				}
