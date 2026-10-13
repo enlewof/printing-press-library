@@ -56,6 +56,11 @@
       "name": "Menu search",
       "command": "menu-search",
       "description": "Search menu items across all of today's events."
+    },
+    {
+      "name": "Delivery status",
+      "command": "delivery-status",
+      "description": "Whether your order for a day (default today) was delivered, with delivery time, vendor and items."
     }
   ]
 }

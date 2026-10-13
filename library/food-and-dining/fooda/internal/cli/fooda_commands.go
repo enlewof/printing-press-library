@@ -2222,6 +2222,12 @@ func init() {
 				for _, props := range orders {
 					for _, pres := range props.Presenter {
 						o := pres.Order
+						// Scheduled orders share the delivered orders' status and carry a
+						// future date; only the delivery text separates them, and they
+						// have not been served yet. Unrecognized text is kept.
+						if state, _ := classifyDelivery(o.Delivery); state == deliveryScheduled {
+							continue
+						}
 						orderTime := time.Unix(o.OrderFulfilledTimeUnix, 0)
 						if orderTime.Before(cutoff) {
 							continue
@@ -2480,6 +2486,13 @@ func init() {
 		weekAheadCmd := &cobra.Command{
 			Use:   "week-ahead",
 			Short: "View live events for the next 7 days in a daily one-line digest",
+			Long: strings.Trim(`
+View live events for the next days in a daily one-line digest.
+
+An event drops off this list once its delivery is complete, so a day with no event
+does not mean there was no order. Run "delivery-status" to check whether an order
+was delivered.
+`, "\n"),
 			Example: strings.Trim(`
   fooda-pp-cli week-ahead
 `, "\n"),
@@ -2618,6 +2631,9 @@ func init() {
 				}
 				if len(results) == 0 {
 					fmt.Fprintln(cmd.OutOrStdout(), "No upcoming events found.")
+				}
+				if _, hasToday := groups[time.Now().Format("2006-01-02")]; !hasToday {
+					fmt.Fprintln(cmd.ErrOrStderr(), weekAheadDroppedNote)
 				}
 				return nil
 			},

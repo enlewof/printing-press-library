@@ -26,7 +26,7 @@ func TestFoodaCommandsHelpWiring(t *testing.T) {
 		"events", "restaurants", "menu", "orders", "orders get",
 		"subsidy", "card", "whoami", "recommend", "order", "sync",
 		"served-history", "venue-rotation", "spend-trends",
-		"week-ahead", "subsidy-status", "menu-search",
+		"week-ahead", "subsidy-status", "menu-search", "delivery-status",
 	}
 
 	for _, sub := range cmds {

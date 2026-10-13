@@ -136,6 +136,9 @@ fooda-pp-cli subsidy-status
 # See what is being served this week
 fooda-pp-cli week-ahead
 
+# Check whether today's order was delivered
+fooda-pp-cli delivery-status
+
 # Pull your order history into the local store
 fooda-pp-cli sync
 
@@ -178,11 +181,20 @@ fooda-pp-cli menu-search vegan
 
 Searches every event menu for the term.
 
+### Did today's lunch arrive?
+
+```bash
+fooda-pp-cli delivery-status --agent
+```
+
+Reports each order on the date as `delivered`, `scheduled`, or `unknown`, with the delivery text, vendor and items. It reads order history because a delivered event no longer appears in `events` or `week-ahead`.
+
 ## Limitations & Anti-Triggers
 
 - **Ordering Support**: Ordering is supported via `order add` and `order place` when using `--confirm`. Automated agents must never pass `--confirm` without explicit user intent.
 - **Cancellation Limitation**: The `order cancel` command is not supported (please cancel manually in the Fooda app).
 - **`whoami` Cloudflare Constraints**: The `whoami` command is heavily limited by Cloudflare challenges. It fallbacks to greeting pages; account and building IDs are extracted from the home page.
+- **Delivered events disappear**: Once a day's delivery completes, Fooda drops that event from `events` and `week-ahead`, and the My Fooda page jumps to the next day with no status. A missing event for today does not mean there was no order. Run `delivery-status` instead, which reads order history (`Delivered on …` versus `Delivering on … between …`). Orders report the same `checkout_complete` status whether they were delivered or are still scheduled, so the delivery text is the only delivered-versus-scheduled signal.
 
 ## Unique Features
 
@@ -232,4 +244,11 @@ These capabilities aren't available in any other tool for this API.
 
   ```bash
   fooda-pp-cli menu-search vegan --agent
+  ```
+- **`delivery-status`** — Whether your order for a day (default today) was delivered, with delivery time, vendor and items.
+
+  _Use to confirm lunch arrived; delivered events drop off events and week-ahead, so a missing event does not mean there was no order._
+
+  ```bash
+  fooda-pp-cli delivery-status --agent
   ```

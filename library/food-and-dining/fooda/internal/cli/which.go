@@ -33,6 +33,7 @@ var whichIndex = []whichEntry{
 	{Command: "week-ahead", Description: "One-line-per-day digest of upcoming events and restaurants at your building.", Group: "Lunch planning", WhyItMatters: "Use for a quick morning check of what is being served this week."},
 	{Command: "subsidy-status", Description: "Remaining dollars of today's subsidy and when it is valid.", Group: "Lunch planning", WhyItMatters: "Use before ordering to know how much of the meal is covered."},
 	{Command: "menu-search", Description: "Search menu items across all of today's events.", Group: "Lunch planning", WhyItMatters: "Use for dietary or craving lookups without opening each vendor page."},
+	{Command: "delivery-status", Description: "Whether your order for a day (default today) was delivered, with delivery time, vendor and items.", Group: "Lunch planning", WhyItMatters: "Use to confirm lunch arrived; delivered events drop off events and week-ahead, so a missing event does not mean there was no order."},
 	{Command: "events", Description: "Search public events (popup, cafe, delivery, catering) for an account/building and date range.", Group: "events", WhyItMatters: "Search public events (popup, cafe, delivery, catering) for an account/building and date range."}, // pp:which-promoted
 	{Command: "recommendations", Description: "Personalized recommendations for a select event (variables.input.targetId).", Group: "recommendations", WhyItMatters: "Personalized recommendations for a select event (variables."}, // pp:which-promoted
 	{Command: "subsidies", Description: "List your subsidies with coverage, validity, state, and remaining balance (qrInfo).", Group: "subsidies", WhyItMatters: "List your subsidies with coverage, validity, state, and remaining balance (qrInfo)."}, // pp:which-promoted
@@ -345,6 +346,7 @@ var whichWriteVerbs = map[string]bool{
 
 var whichTokenAliases = map[string]string{
 	"repo": "repository", "repos": "repository", "repository": "repository", "repositories": "repository",
+	"delivery": "delivery", "delivered": "delivery",
 }
 
 // Filler words that must not create a which match by themselves. Possessive

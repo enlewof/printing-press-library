@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "id": "fooda-delivery-state-comes-from-delivery-text",
+  "applied_at": "2026-10-13",
+  "base_run_id": "20261009-112517-8bc179ae",
+  "base_printing_press_version": "4.33.2",
+  "summary": "Delivered-versus-scheduled state comes only from an order's delivery text, and a delivered event drops off the live events feed, so delivery questions are answered from order history and never inferred from event presence or order status.",
+  "reason": "Fooda reports every placed order as checkout_complete and removes a day's event once it is delivered; trusting status or event presence listed scheduled orders as served meals and made a delivered day look like no order.",
+  "files": [
+    "internal/cli/fooda_delivery.go",
+    "internal/cli/fooda_commands.go",
+    "internal/cli/which.go"
+  ],
+  "call_sites": [
+    "classifyDelivery(",
+    "weekAheadDroppedNote",
+    "\"delivery-status\"",
+    "\"delivered\": \"delivery\""
+  ],
+  "validated_outcome": "Live order history returned status checkout_complete for delivered and upcoming orders alike; only the delivery text ('Delivered on ...' versus 'Delivering on ... between ...') differed.",
+  "findings_addressed": ["F1", "F2", "F3"]
+}
