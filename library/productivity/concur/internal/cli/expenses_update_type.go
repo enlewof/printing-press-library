@@ -235,9 +235,14 @@ func updateExpenseTypeViaBrowserFallback(cmd *cobra.Command, c *client.Client, u
 	}
 	// A successful save navigates back to the itemization list, so the URL
 	// stops containing this line's id.
-	if err := clickWithNavigationRetry(saveRef, "itemizations/"+expenseId, "Save Itemization", "button", stepTimeout); err != nil {
-		return nil, 0, err
-	}
+	//
+	// PATCH(Greptile review, "Saved changes can look unsuccessful") -- the
+	// helper can fail after the click already landed (the URL check or the
+	// re-find of the Save button errors once the page has navigated away), so
+	// its error does not prove nothing was saved. Hold it and read the line
+	// back to decide, rather than reporting an ordinary failure for a type
+	// that may already be changed.
+	saveErr := clickWithNavigationRetry(saveRef, "itemizations/"+expenseId, "Save Itemization", "button", stepTimeout)
 	time.Sleep(1 * time.Second)
 
 	expensePath := "/expensereports/v4/users/{user_id}/context/{context_type}/reports/{report_id}/expenses/{expense_id}"
@@ -246,18 +251,28 @@ func updateExpenseTypeViaBrowserFallback(cmd *cobra.Command, c *client.Client, u
 	expensePath = replacePathParam(expensePath, "report_id", formatCLIParamValue(reportId))
 	expensePath = replacePathParam(expensePath, "expense_id", formatCLIParamValue(expenseId))
 
-	// From here the click is irreversible: any failure means the line may
-	// already carry the new type, so wrap errors the way the other mutating
-	// fallbacks do.
+	// From here the click may have landed: any failure that is not a
+	// confirmed no-op means the line may already carry the new type, so wrap
+	// errors the way the other mutating fallbacks do.
 	updated, err := c.GetNoCache(cmd.Context(), expensePath, nil)
 	if err != nil {
+		cause := fmt.Errorf("fetching expense after browser fallback save: %w", err)
+		if saveErr != nil {
+			cause = fmt.Errorf("%w (the Save Itemization click had already reported: %v)", cause, saveErr)
+		}
 		return nil, 0, &expensesUpdatePartialSuccessError{
 			reportId:  reportId,
 			expenseId: expenseId,
-			cause:     fmt.Errorf("fetching expense after browser fallback save: %w", err),
+			cause:     cause,
 		}
 	}
 	if err := verifyExpenseTypeUpdateApplied(updated, wantType, initialAmount); err != nil {
+		// The click helper failed and the line still shows its old type: the
+		// two signals agree that nothing was saved, so this is an ordinary,
+		// safely retryable failure rather than a possible partial success.
+		if saveErr != nil && errors.Is(err, errExpenseTypeNotApplied) {
+			return nil, 0, saveErr
+		}
 		return nil, 0, &expensesUpdatePartialSuccessError{
 			reportId:  reportId,
 			expenseId: expenseId,
@@ -265,9 +280,16 @@ func updateExpenseTypeViaBrowserFallback(cmd *cobra.Command, c *client.Client, u
 		}
 	}
 
+	if saveErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Note: the Save Itemization click reported an error (%v), but re-reading the line shows type %q, so the save went through.\n", saveErr, wantType)
+	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Expense type updated successfully via browser.\n")
 	return updated, 200, nil
 }
+
+// errExpenseTypeNotApplied marks a re-fetched line that still shows its old
+// type, as opposed to one whose amount changed unexpectedly.
+var errExpenseTypeNotApplied = errors.New("type save did not actually apply")
 
 // verifyExpenseTypeUpdateApplied checks that a re-fetched line actually shows
 // the requested type and an unchanged amount. A successful GET alone is not
@@ -286,7 +308,7 @@ func verifyExpenseTypeUpdateApplied(raw json.RawMessage, wantType string, wantAm
 		return fmt.Errorf("parsing re-fetched expense to verify the type save applied: %w", err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(got.ExpenseType.Name), strings.TrimSpace(wantType)) {
-		return fmt.Errorf("type save did not actually apply: requested type %q but the re-fetched expense still shows %q -- the Save Itemization click may not have registered", wantType, got.ExpenseType.Name)
+		return fmt.Errorf("%w: requested type %q but the re-fetched expense still shows %q -- the Save Itemization click may not have registered", errExpenseTypeNotApplied, wantType, got.ExpenseType.Name)
 	}
 	const amountEpsilon = 0.005
 	if got.TransactionAmount.Value < wantAmount-amountEpsilon || got.TransactionAmount.Value > wantAmount+amountEpsilon {
