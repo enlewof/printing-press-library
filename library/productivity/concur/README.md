@@ -288,6 +288,7 @@ itemization, such as a hotel folio. `expenses update --type` takes the type's na
 Concur's picker and works on itemization lines only. The picker is policy-filtered: a type can
 appear in `expense-types list` yet not be selectable, in which case the command stops without
 saving and lists the types that are offered. It drives the browser (see the setup note below).
+Over MCP these are the `reports_exceptions`, `expenses_itemizations` and `expenses_update_type` tools.
 
 ### Compare real flight and hotel options before requesting travel
 
