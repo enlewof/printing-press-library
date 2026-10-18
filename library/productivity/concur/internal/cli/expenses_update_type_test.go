@@ -24,6 +24,7 @@ func TestExpensesUpdate_Type_BrowserFallback(t *testing.T) {
 
 	t.Run("SuccessPath", func(t *testing.T) {
 		_ = os.Remove(stateFile)
+		stillCached := seedStaleCache(t)
 		_ = os.Remove(stateFile + ".combobox_clicked")
 		_ = os.Remove(stateFile + ".option_clicked")
 		_ = os.Remove(stateFile + ".save_clicked")
@@ -127,6 +128,9 @@ exit 0
 
 		if _, err := os.Stat(stateFile + ".save_clicked"); os.IsNotExist(err) {
 			t.Error("expected Save Itemization to be clicked, but state file does not exist")
+		}
+		if stillCached() {
+			t.Error("the browser write left a stale cached read behind")
 		}
 
 		var envelope map[string]any
