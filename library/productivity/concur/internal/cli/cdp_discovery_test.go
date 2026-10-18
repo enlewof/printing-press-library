@@ -296,3 +296,133 @@ fi
 		}
 	})
 }
+
+// PATCH(Greptile review, "Browser errors expose session URLs") -- the ws://
+// session id is a browser-control capability and must not reach error text.
+func TestRedactCDPTarget(t *testing.T) {
+	const (
+		secret = "0f3a-secret-id"
+		ws     = "ws://127.0.0.1:9222/devtools/browser/" + secret
+	)
+	tests := []struct {
+		name   string
+		text   string
+		target string
+		want   string
+	}{
+		{
+			name:   "target in argv",
+			text:   "agent-browser --cdp " + ws + " --session concur-pp-cli open https://x",
+			target: ws,
+			want:   "agent-browser --cdp ws://127.0.0.1:9222/devtools/browser/<redacted> --session concur-pp-cli open https://x",
+		},
+		{
+			name:   "target echoed on stderr inside quotes",
+			text:   `Failed to connect to "` + ws + `": connection refused`,
+			target: ws,
+			want:   `Failed to connect to "ws://127.0.0.1:9222/devtools/browser/<redacted>": connection refused`,
+		},
+		{
+			name:   "http form derived by the helper",
+			text:   "GET http://127.0.0.1:9222/devtools/browser/" + secret + " returned 404",
+			target: ws,
+			want:   "GET http://127.0.0.1:9222/devtools/browser/<redacted> returned 404",
+		},
+		{
+			name:   "bare path followed by sentence punctuation",
+			text:   "unexpected path /devtools/browser/" + secret + ", giving up",
+			target: ws,
+			want:   "unexpected path /devtools/browser/<redacted>, giving up",
+		},
+		{
+			name:   "id containing a delimiter is still removed",
+			text:   "bad endpoint ws://127.0.0.1:9222/devtools/browser/ab(cd-" + secret + ")",
+			target: "ws://127.0.0.1:9222/devtools/browser/ab(cd-" + secret + ")",
+			want:   "bad endpoint ws://127.0.0.1:9222/devtools/browser/<redacted>",
+		},
+		{
+			name:   "session id found even when it is not the active target",
+			text:   "other browser at ws://127.0.0.1:9333/devtools/browser/" + secret,
+			target: "9222",
+			want:   "other browser at ws://127.0.0.1:9333/devtools/browser/<redacted>",
+		},
+		{
+			name:   "bare port target leaves text alone",
+			text:   "agent-browser --cdp 9222 --session s open https://x failed",
+			target: "9222",
+			want:   "agent-browser --cdp 9222 --session s open https://x failed",
+		},
+		{
+			name:   "no target",
+			text:   "agent-browser --session s open https://x failed: boom",
+			target: "",
+			want:   "agent-browser --session s open https://x failed: boom",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redactCDPTarget(tt.text, tt.target)
+			if got != tt.want {
+				t.Fatalf("got  %q\nwant %q", got, tt.want)
+			}
+			if strings.Contains(got, secret) {
+				t.Fatalf("session id leaked: %q", got)
+			}
+			if again := redactCDPTarget(got, tt.target); again != got {
+				t.Fatalf("not idempotent: %q then %q", got, again)
+			}
+		})
+	}
+}
+
+func TestRunAgentBrowserErrorRedactsCDPTarget(t *testing.T) {
+	const secret = "0f3a-secret-id"
+	ws := "ws://127.0.0.1:9222/devtools/browser/" + secret
+
+	mockBinDir := t.TempDir()
+	// The helper fails and echoes the endpoint it was given, as a connect
+	// failure would.
+	mockScript := "#!/bin/bash\n" +
+		"echo \"connect failed: $2\" >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(filepath.Join(mockBinDir, "agent-browser"), []byte(mockScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", mockBinDir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	origPort := activeCDPPort
+	t.Cleanup(func() { activeCDPPort = origPort })
+
+	t.Run("ws target is redacted from argv and stderr", func(t *testing.T) {
+		activeCDPPort = ws
+		_, err := runAgentBrowser("open", "https://us2.concursolutions.com/home")
+		if err == nil {
+			t.Fatal("expected an error from the failing helper")
+		}
+		msg := err.Error()
+		if strings.Contains(msg, secret) {
+			t.Fatalf("error leaked the session id: %s", msg)
+		}
+		for _, want := range []string{
+			"--cdp ws://127.0.0.1:9222/devtools/browser/<redacted>",
+			"connect failed: ws://127.0.0.1:9222/devtools/browser/<redacted>",
+			"open https://us2.concursolutions.com/home",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("error lost useful context %q: %s", want, msg)
+			}
+		}
+	})
+
+	t.Run("port target is left readable", func(t *testing.T) {
+		activeCDPPort = "9222"
+		_, err := runAgentBrowser("open", "https://us2.concursolutions.com/home")
+		if err == nil {
+			t.Fatal("expected an error from the failing helper")
+		}
+		if !strings.Contains(err.Error(), "--cdp 9222") {
+			t.Errorf("a bare port is not a secret and should stay in the error: %v", err)
+		}
+	})
+}

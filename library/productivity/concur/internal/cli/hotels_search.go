@@ -277,7 +277,11 @@ func runAgentBrowser(args ...string) ([]byte, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("agent-browser %s failed: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		// PATCH(Greptile review, "Browser errors expose session URLs") -- a
+		// ws:// activeCDPPort is a browser-control capability, and it reaches
+		// both the argv and the helper's stderr; these errors get logged and
+		// pasted into bug reports.
+		return nil, fmt.Errorf("agent-browser %s failed: %w (%s)", redactCDPTarget(strings.Join(args, " "), activeCDPPort), err, redactCDPTarget(strings.TrimSpace(stderr.String()), activeCDPPort))
 	}
 	return out.Bytes(), nil
 }

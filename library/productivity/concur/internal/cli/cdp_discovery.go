@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -77,6 +78,24 @@ func describeCDPTarget(target string) string {
 		return "port " + port
 	}
 	return "the dedicated Concur browser"
+}
+
+// cdpSessionIDRE matches the session id of a DevTools browser endpoint, in a
+// full URL or a bare path. The delimiter set stops the match at punctuation
+// that surrounds a URL in prose or JSON, so the rest of a diagnostic survives.
+var cdpSessionIDRE = regexp.MustCompile(`(/devtools/browser/)[^\s"'<>()\[\]{},;]+`)
+
+// redactCDPTarget masks the session id of any DevTools endpoint in text about
+// to be shown to the user. agent-browser's argv carries the target and the
+// helper may echo it on stderr, and both end up in error messages. target is
+// also replaced verbatim so an id containing a delimiter the pattern stops at
+// cannot leave a tail behind.
+func redactCDPTarget(text, target string) string {
+	const redacted = "<redacted>"
+	if i := strings.Index(target, devToolsBrowserPathPrefix); i >= 0 {
+		text = strings.ReplaceAll(text, target, target[:i+len(devToolsBrowserPathPrefix)]+redacted)
+	}
+	return cdpSessionIDRE.ReplaceAllString(text, "${1}"+redacted)
 }
 
 // parseDevToolsActivePort turns the content of Chrome's DevToolsActivePort
