@@ -565,7 +565,7 @@ func TestExpensesUpdate_Type_SaveClickErrorIsReconciled(t *testing.T) {
 	hotel := `{"expenseId":"exp-1","parentExpenseId":"parent-1","expenseType":{"id":"HTL","name":"Hotel"},"transactionAmount":{"value":50.0}}`
 
 	t.Run("click errors after the save landed", func(t *testing.T) {
-		stderr, err := runTypeUpdateWithFailingSave(t, true, func(stateFile string) http.HandlerFunc {
+		stderr, stillCached, err := runTypeUpdateWithFailingSave(t, true, func(stateFile string) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				body := taxi
@@ -583,10 +583,13 @@ func TestExpensesUpdate_Type_SaveClickErrorIsReconciled(t *testing.T) {
 				t.Errorf("stderr missing %q: %s", want, stderr)
 			}
 		}
+		if stillCached() {
+			t.Error("a save that errored but landed left a stale cached read behind")
+		}
 	})
 
 	t.Run("click errors and the line is unchanged", func(t *testing.T) {
-		_, err := runTypeUpdateWithFailingSave(t, false, func(string) http.HandlerFunc {
+		_, stillCached, err := runTypeUpdateWithFailingSave(t, false, func(string) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(taxi))
@@ -601,11 +604,16 @@ func TestExpensesUpdate_Type_SaveClickErrorIsReconciled(t *testing.T) {
 		if strings.Contains(err.Error(), "may already carry the new values") {
 			t.Errorf("a confirmed no-op must not be reported as a possible partial success: %v", err)
 		}
+		// The click errored before anything was read back, but it may still have
+		// landed, so the cache is evicted on this path too.
+		if stillCached() {
+			t.Error("a save that errored left a stale cached read behind")
+		}
 	})
 
 	t.Run("click errors and the line cannot be read back", func(t *testing.T) {
 		var reads atomic.Int32
-		_, err := runTypeUpdateWithFailingSave(t, true, func(string) http.HandlerFunc {
+		_, stillCached, err := runTypeUpdateWithFailingSave(t, true, func(string) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if reads.Add(1) == 1 {
@@ -624,6 +632,9 @@ func TestExpensesUpdate_Type_SaveClickErrorIsReconciled(t *testing.T) {
 				t.Errorf("error missing %q: %v", want, err)
 			}
 		}
+		if stillCached() {
+			t.Error("a save whose read-back failed left a stale cached read behind")
+		}
 	})
 }
 
@@ -632,9 +643,11 @@ func TestExpensesUpdate_Type_SaveClickErrorIsReconciled(t *testing.T) {
 // navigates the page and the helper loses its execution context. landed
 // records the click as having registered, which the fake Concur can key its
 // read-back on. getExpense serves the GET of the line; it receives the state
-// file prefix the fake browser writes to.
-func runTypeUpdateWithFailingSave(t *testing.T, landed bool, getExpense func(stateFile string) http.HandlerFunc) (stderr string, err error) {
+// file prefix the fake browser writes to. stillCached reports whether a
+// response planted in the cache before the run survived it.
+func runTypeUpdateWithFailingSave(t *testing.T, landed bool, getExpense func(stateFile string) http.HandlerFunc) (stderr string, stillCached func() bool, err error) {
 	t.Helper()
+	stillCached = seedStaleCache(t)
 	stateFile := filepath.Join(t.TempDir(), "mock_state")
 
 	record := ""
@@ -706,5 +719,5 @@ exit 0
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(&stderrBuf)
 	err = cmd.Execute()
-	return stderrBuf.String(), err
+	return stderrBuf.String(), stillCached, err
 }
