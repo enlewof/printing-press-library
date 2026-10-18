@@ -289,6 +289,10 @@ reads the apex and every captured subdomain, newest capture first.`,
 				if fromPressAuth {
 					fmt.Fprintln(w, "press-auth supplied an old capture, not your live browser session. Capture again:")
 					fmt.Fprintf(w, "\n  %s\n\n", pressAuthLoginCommand(domain, configuredBaseURL(flags)))
+				} else if fromCookiesFile {
+					// PATCH(Greptile review, "Retry reads the stale file") -- signing in
+					// again does not change a file that was exported earlier.
+					fmt.Fprintf(w, "%s holds an old session. Sign in to Concur (https://%s), export fresh cookies, replace the file, then run this command again.\n", cookiesFile, strings.TrimPrefix(domain, "."))
 				} else {
 					fmt.Fprintf(w, "Sign in to Concur in the browser you are importing from (https://%s), then run this command again.\n", strings.TrimPrefix(domain, "."))
 				}

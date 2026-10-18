@@ -118,6 +118,14 @@ func TestAuthLogin_RefusesAnExpiredSessionAndKeepsTheStoredOne(t *testing.T) {
 		if !strings.Contains(out, "expired 2 days ago") {
 			t.Errorf("output should say how stale the session is, got:\n%s", out)
 		}
+		// Signing in again cannot refresh a file exported earlier, so the advice
+		// must be to re-export it, not to retry.
+		if !strings.Contains(out, "holds an old session") || !strings.Contains(out, "export fresh cookies") {
+			t.Errorf("a saved cookies file needs advice to re-export it, got:\n%s", out)
+		}
+		if strings.Contains(out, "browser you are importing from") {
+			t.Errorf("the advice to sign in and retry cannot fix a saved file:\n%s", out)
+		}
 		if _, statErr := os.Stat(credentials); !os.IsNotExist(statErr) {
 			t.Errorf("an expired session was saved to %s (stat err: %v)", credentials, statErr)
 		}
