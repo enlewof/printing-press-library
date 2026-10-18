@@ -282,6 +282,19 @@ reads the apex and every captured subdomain, newest capture first.`,
 			}
 			cookies = strings.Join(kept, "; ")
 
+			// PATCH(amend-2026-10-18: auth login saved an already-expired session)
+			// -- refuse before overwriting a working session with a dead one.
+			if err := expiredSessionError(cookieMap["JWT"], time.Now()); err != nil {
+				fmt.Fprintf(w, "\n%s %v.\n\n", red("ERROR"), err)
+				if fromPressAuth {
+					fmt.Fprintln(w, "press-auth supplied an old capture, not your live browser session. Capture again:")
+					fmt.Fprintf(w, "\n  %s\n\n", pressAuthLoginCommand(domain, configuredBaseURL(flags)))
+				} else {
+					fmt.Fprintf(w, "Sign in to Concur in the browser you are importing from (https://%s), then run this command again.\n", strings.TrimPrefix(domain, "."))
+				}
+				return authErr(err)
+			}
+
 			// Step 5: Save to config
 			cfg, err := config.Load(flags.configPath)
 			if err != nil {
